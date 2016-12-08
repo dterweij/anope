@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -78,11 +78,8 @@ FlagsAccessProvider* FlagsAccessProvider::ap;
 
 class CommandCSFlags : public Command
 {
-	void DoModify(CommandSource &source, ChannelInfo *ci, const std::vector<Anope::string> &params)
+	void DoModify(CommandSource &source, ChannelInfo *ci, Anope::string mask, const Anope::string &flags)
 	{
-		Anope::string mask = params.size() > 2 ? params[2] : "";
-		Anope::string flags = params.size() > 3 ? params[3] : "";
-
 		if (flags.empty())
 		{
 			this->OnSyntaxError(source, "");
@@ -91,6 +88,7 @@ class CommandCSFlags : public Command
 
 		AccessGroup u_access = source.AccessFor(ci);
 		const ChanAccess *highest = u_access.Highest();
+		const NickAlias *na = NULL;
 
 		if (IRCD->IsChannelValid(mask))
 		{
@@ -116,7 +114,7 @@ class CommandCSFlags : public Command
 		}
 		else
 		{
-			const NickAlias *na = NickAlias::Find(mask);
+			na = NickAlias::Find(mask);
 			if (!na && Config->GetModule("chanserv")->Get<bool>("disallow_hostmask_access"))
 			{
 				source.Reply(_("Masks and unregistered users may not be on access lists."));
@@ -133,6 +131,9 @@ class CommandCSFlags : public Command
 					return;
 				}
 			}
+
+			if (na)
+				mask = na->nick;
 		}
 
 		ChanAccess *current = NULL;
@@ -142,7 +143,7 @@ class CommandCSFlags : public Command
 		for (current_idx = ci->GetAccessCount(); current_idx > 0; --current_idx)
 		{
 			ChanAccess *access = ci->GetAccess(current_idx - 1);
-			if (mask.equals_ci(access->mask))
+			if ((na && na->nc == access->GetAccount()) || mask.equals_ci(access->Mask()))
 			{
 				// Flags allows removing others that have the same access as you,
 				// but no other access system does.
@@ -175,21 +176,26 @@ class CommandCSFlags : public Command
 		}
 
 		Privilege *p = NULL;
-		int add = 1;
+		bool add = true;
 		for (size_t i = 0; i < flags.length(); ++i)
 		{
 			char f = flags[i];
 			switch (f)
 			{
 				case '+':
-					add = 1;
+					add = true;
 					break;
 				case '-':
-					add = 0;
+					add = false;
 					break;
 				case '*':
 					for (std::map<Anope::string, char>::iterator it = defaultFlags.begin(), it_end = defaultFlags.end(); it != it_end; ++it)
 					{
+						bool has = current_flags.count(it->second);
+						// If we are adding a flag they already have or removing one they don't have, don't bother
+						if (add == has)
+							continue;
+
 						if (!u_access.HasPriv(it->first) && !u_access.founder)
 						{
 							if (source.HasPriv("chanserv/access/modify"))
@@ -197,9 +203,10 @@ class CommandCSFlags : public Command
 							else
 								continue;
 						}
-						if (add == 1)
+
+						if (add)
 							current_flags.insert(it->second);
-						else if (add == 0)
+						else
 							current_flags.erase(it->second);
 					}
 					break;
@@ -221,13 +228,13 @@ class CommandCSFlags : public Command
 								override = true;
 							else
 							{
-								source.Reply(_("You can not set the \002%c\002 flag."), f);
+								source.Reply(_("You cannot set the \002%c\002 flag."), f);
 								break;
 							}
 						}
-						if (add == 1)
+						if (add)
 							current_flags.insert(f);
-						else if (add == 0)
+						else
 							current_flags.erase(f);
 						break;
 					}
@@ -254,8 +261,7 @@ class CommandCSFlags : public Command
 		if (!provider)
 			return;
 		FlagsChanAccess *access = anope_dynamic_static_cast<FlagsChanAccess *>(provider->Create());
-		access->ci = ci;
-		access->mask = mask;
+		access->SetMask(mask, ci);
 		access->creator = source.GetNick();
 		access->last_seen = current ? current->last_seen : 0;
 		access->created = Anope::CurTime;
@@ -272,12 +278,12 @@ class CommandCSFlags : public Command
 		if (p != NULL)
 		{
 			if (add)
-				source.Reply(_("Privilege \002%s\002 added to \002%s\002 on \002%s\002, new flags are +\002%s\002"), p->name.c_str(), access->mask.c_str(), ci->name.c_str(), access->AccessSerialize().c_str());
+				source.Reply(_("Privilege \002%s\002 added to \002%s\002 on \002%s\002, new flags are +\002%s\002"), p->name.c_str(), access->Mask().c_str(), ci->name.c_str(), access->AccessSerialize().c_str());
 			else
-				source.Reply(_("Privilege \002%s\002 removed from \002%s\002 on \002%s\002, new flags are +\002%s\002"), p->name.c_str(), access->mask.c_str(), ci->name.c_str(), access->AccessSerialize().c_str());
+				source.Reply(_("Privilege \002%s\002 removed from \002%s\002 on \002%s\002, new flags are +\002%s\002"), p->name.c_str(), access->Mask().c_str(), ci->name.c_str(), access->AccessSerialize().c_str());
 		}
 		else
-			source.Reply(_("Flags for \002%s\002 on %s set to +\002%s\002"), access->mask.c_str(), ci->name.c_str(), access->AccessSerialize().c_str());
+			source.Reply(_("Flags for \002%s\002 on %s set to +\002%s\002"), access->Mask().c_str(), ci->name.c_str(), access->AccessSerialize().c_str());
 	}
 
 	void DoList(CommandSource &source, ChannelInfo *ci, const std::vector<Anope::string> &params)
@@ -311,14 +317,14 @@ class CommandCSFlags : public Command
 					if (pass == false)
 						continue;
 				}
-				else if (!Anope::Match(access->mask, arg))
+				else if (!Anope::Match(access->Mask(), arg))
 					continue;
 			}
 
 			ListFormatter::ListEntry entry;
 			++count;
 			entry["Number"] = stringify(i + 1);
-			entry["Mask"] = access->mask;
+			entry["Mask"] = access->Mask();
 			entry["Flags"] = flags;
 			entry["Creator"] = access->creator;
 			entry["Created"] = Anope::strftime(access->created, source.nc, true);
@@ -365,7 +371,7 @@ class CommandCSFlags : public Command
 	CommandCSFlags(Module *creator) : Command(creator, "chanserv/flags", 1, 4)
 	{
 		this->SetDesc(_("Modify the list of privileged users"));
-		this->SetSyntax(_("\037channel\037 MODIFY \037mask\037 \037changes\037"));
+		this->SetSyntax(_("\037channel\037 [MODIFY] \037mask\037 \037changes\037"));
 		this->SetSyntax(_("\037channel\037 LIST [\037mask\037 | +\037flags\037]"));
 		this->SetSyntax(_("\037channel\037 CLEAR"));
 	}
@@ -386,6 +392,8 @@ class CommandCSFlags : public Command
 		bool has_access = false;
 		if (source.HasPriv("chanserv/access/modify"))
 			has_access = true;
+		else if (is_list && source.HasPriv("chanserv/access/list"))
+			has_access = true;
 		else if (is_list && source.AccessFor(ci).HasPriv("ACCESS_LIST"))
 			has_access = true;
 		else if (source.AccessFor(ci).HasPriv("ACCESS_CHANGE"))
@@ -395,14 +403,26 @@ class CommandCSFlags : public Command
 			source.Reply(ACCESS_DENIED);
 		else if (Anope::ReadOnly && !is_list)
 			source.Reply(_("Sorry, channel access list modification is temporarily disabled."));
-		else if (cmd.equals_ci("MODIFY"))
-			this->DoModify(source, ci, params);
 		else if (is_list)
 			this->DoList(source, ci, params);
 		else if (cmd.equals_ci("CLEAR"))
 			this->DoClear(source, ci);
 		else
-			this->OnSyntaxError(source, cmd);
+		{
+			Anope::string mask, flags;
+			if (cmd.equals_ci("MODIFY"))
+			{
+				mask = params.size() > 2 ? params[2] : "";
+				flags = params.size() > 3 ? params[3] : "";
+			}
+			else
+			{
+				mask = cmd;
+				flags = params.size() > 2 ? params[2] : "";
+			}
+
+			this->DoModify(source, ci, mask, flags);
+		}
 	}
 
 	bool OnHelp(CommandSource &source, const Anope::string &subcommand) anope_override
@@ -412,19 +432,19 @@ class CommandCSFlags : public Command
 		source.Reply(_("%s is another way to modify the channel access list, similar to\n"
 				"the XOP and ACCESS methods."), source.command.c_str());
 		source.Reply(" ");
-		source.Reply(_("The \002MODIFY\002 command allows you to modify the access list. If mask is\n"
-				"not already on the access list is it added, then the changes are applied.\n"
+		source.Reply(_("The \002MODIFY\002 command allows you to modify the access list. If the mask is\n"
+				"not already on the access list it is added, then the changes are applied.\n"
 				"If the mask has no more flags, then the mask is removed from the access list.\n"
 				"Additionally, you may use +* or -* to add or remove all flags, respectively. You are\n"
 				"only able to modify the access list if you have the proper permission on the channel,\n"
-				"and even then you can only give other people access to up what you already have."));
+				"and even then you can only give other people access to the equivalent of what your access is."));
 		source.Reply(" ");
 		source.Reply(_("The \002LIST\002 command allows you to list existing entries on the channel access list.\n"
 				"If a mask is given, the mask is wildcard matched against all existing entries on the\n"
 				"access list, and only those entries are returned. If a set of flags is given, only those\n"
 				"on the access list with the specified flags are returned."));
 		source.Reply(" ");
-		source.Reply(_("The \002CLEAR\002 command clears the channel access list, which requires channel founder."));
+		source.Reply(_("The \002CLEAR\002 command clears the channel access list. This requires channel founder access."));
 		source.Reply(" ");
 		source.Reply(_("The available flags are:"));
 

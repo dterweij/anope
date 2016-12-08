@@ -1,17 +1,16 @@
 /* Miscellaneous routines.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
-#include "version.h"
+#include "build.h"
 #include "modules.h"
 #include "lists.h"
 #include "config.h"
@@ -321,7 +320,7 @@ Anope::string Anope::Duration(time_t t, const NickCore *nc)
 	time_t minutes = (t / 60) % 60;
 	time_t seconds = (t) % 60;
 
-	if (!days && !hours && !minutes)
+	if (!years && !days && !hours && !minutes)
 		return stringify(seconds) + " " + (seconds != 1 ? Language::Translate(nc, _("seconds")) : Language::Translate(nc, _("second")));
 	else
 	{
@@ -617,11 +616,6 @@ const Anope::string Anope::LastError()
 #endif
 }
 
-ModuleVersion Module::GetVersion() const
-{
-	return ModuleVersion(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH);
-}
-
 Anope::string Anope::Version()
 {
 #ifdef VERSION_GIT
@@ -638,7 +632,11 @@ Anope::string Anope::VersionShort()
 
 Anope::string Anope::VersionBuildString()
 {
+#ifdef REPRODUCIBLE_BUILD
+	Anope::string s = "build #" + stringify(BUILD);
+#else
 	Anope::string s = "build #" + stringify(BUILD) + ", compiled " + Anope::compiled;
+#endif
 	Anope::string flags;
 
 #ifdef DEBUG_BUILD

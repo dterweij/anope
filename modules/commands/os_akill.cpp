@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -153,16 +153,19 @@ class CommandOSAKill : public Command
 		if (targ)
 			mask = "*@" + targ->host;
 
-		if (!akills->CanAdd(source, mask, expires, reason))
-			return;
-		else if (mask.find_first_not_of("/~@.*?") == Anope::string::npos)
+		if (Config->GetModule("operserv")->Get<bool>("addakiller", "yes") && !source.GetNick().empty())
+			reason = "[" + source.GetNick() + "] " + reason;
+
+		if (mask.find_first_not_of("/~@.*?") == Anope::string::npos)
 		{
 			source.Reply(USERHOST_MASK_TOO_WIDE, mask.c_str());
 			return;
 		}
-
-		if (Config->GetModule("operserv")->Get<bool>("addakiller", "yes") && !source.GetNick().empty())
-			reason = "[" + source.GetNick() + "] " + reason;
+		else if (mask.find('@') == Anope::string::npos)
+		{
+			source.Reply(BAD_USERHOST_MASK);
+			return;
+		}
 
 		XLine *x = new XLine(mask, source.GetNick(), expires, reason);
 		if (Config->GetModule("operserv")->Get<bool>("akillids"))
@@ -181,6 +184,9 @@ class CommandOSAKill : public Command
 			delete x;
 			return;
 		}
+
+		if (!akills->CanAdd(source, mask, expires, reason))
+			return;
 
 		EventReturn MOD_RESULT;
 		FOREACH_RESULT(OnAddXLine, MOD_RESULT, (source, x, akills));
@@ -281,6 +287,7 @@ class CommandOSAKill : public Command
 					entry["Creator"] = x->by;
 					entry["Created"] = Anope::strftime(x->created, NULL, true);
 					entry["Expires"] = Anope::Expires(x->expires, source.nc);
+					entry["ID"] = x->id;
 					entry["Reason"] = x->reason;
 					this->list.AddEntry(entry);
 				}
@@ -302,6 +309,7 @@ class CommandOSAKill : public Command
 					entry["Creator"] = x->by;
 					entry["Created"] = Anope::strftime(x->created, NULL, true);
 					entry["Expires"] = Anope::Expires(x->expires, source.nc);
+					entry["ID"] = x->id;
 					entry["Reason"] = x->reason;
 					list.AddEntry(entry);
 				}
@@ -347,7 +355,10 @@ class CommandOSAKill : public Command
 		}
 
 		ListFormatter list(source.GetAccount());
-		list.AddColumn(_("Number")).AddColumn(_("Mask")).AddColumn(_("Creator")).AddColumn(_("Created")).AddColumn(_("Expires")).AddColumn(_("Reason"));
+		list.AddColumn(_("Number")).AddColumn(_("Mask")).AddColumn(_("Creator")).AddColumn(_("Created")).AddColumn(_("Expires"));
+		if (Config->GetModule("operserv")->Get<bool>("akillids"))
+			list.AddColumn(_("ID"));
+		list.AddColumn(_("Reason"));
 
 		this->ProcessList(source, params, list);
 	}

@@ -432,11 +432,15 @@ macro(calculate_libraries SRC SRC_LDFLAGS EXTRA_DEPENDS)
   # Reset libraries
   set(LIBRARIES)
   # Check to see if there are any lines matching: /* RequiredLibraries: [something] */
-  read_from_file(${SRC} "/\\\\*[ \t]*RequiredLibraries:[ \t]*.*[ \t]*\\\\*/" REQUIRED_LIBRARIES)
+  if(WIN32)
+    read_from_file(${SRC} "/\\\\*[ \t]*RequiredWindowsLibraries:[ \t]*.*[ \t]*\\\\*/" REQUIRED_LIBRARIES)
+  else(WIN32)
+    read_from_file(${SRC} "/\\\\*[ \t]*RequiredLibraries:[ \t]*.*[ \t]*\\\\*/" REQUIRED_LIBRARIES)
+  endif(WIN32)
   # Iterate through those lines
   foreach(REQUIRED_LIBRARY ${REQUIRED_LIBRARIES})
     # Strip off the /* RequiredLibraries: and */ from the line
-    string(REGEX REPLACE "/\\*[ \t]*RequiredLibraries:[ \t]*([^ \t]*)[ \t]*\\*/" "\\1" REQUIRED_LIBRARY ${REQUIRED_LIBRARY})
+    string(REGEX REPLACE "/\\*[ \t]*Required.*Libraries:[ \t]*([^ \t]*)[ \t]*\\*/" "\\1" REQUIRED_LIBRARY ${REQUIRED_LIBRARY})
     # Replace all commas with semicolons
     string(REGEX REPLACE "," ";" REQUIRED_LIBRARY ${REQUIRED_LIBRARY})
     # Iterate through the libraries given
@@ -445,7 +449,8 @@ macro(calculate_libraries SRC SRC_LDFLAGS EXTRA_DEPENDS)
       if(DEFAULT_LIBRARY_DIRS OR WSDK_PATH OR DEFINED $ENV{VCINSTALLDIR})
         find_library(FOUND_${LIBRARY}_LIBRARY NAMES ${LIBRARY} PATHS ${DEFAULT_LIBRARY_DIRS} ${WSDK_PATH}/lib $ENV{VCINSTALLDIR}/lib ${EXTRA_INCLUDE} ${EXTRA_LIBS})
       else(DEFAULT_LIBRARY_DIRS OR WSDK_PATH OR DEFINED $ENV{VCINSTALLDIR})
-        find_library(FOUND_${LIBRARY}_LIBRARY NAMES ${LIBRARY} ${EXTRA_INCLUDE} ${EXTRA_LIBS})
+        find_library(FOUND_${LIBRARY}_LIBRARY NAMES ${LIBRARY} PATHS ${EXTRA_INCLUDE} ${EXTRA_LIBS} NO_DEFAULT_PATH)
+        find_library(FOUND_${LIBRARY}_LIBRARY NAMES ${LIBRARY} PATHS ${EXTRA_INCLUDE} ${EXTRA_LIBS})
       endif(DEFAULT_LIBRARY_DIRS OR WSDK_PATH OR DEFINED $ENV{VCINSTALLDIR})
       # If the library was found, we will add it to the linker flags
       if(FOUND_${LIBRARY}_LIBRARY)

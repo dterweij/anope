@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef ANOPE_H
@@ -115,6 +114,7 @@ namespace Anope
 		 * The following functions return the various types of strings.
 		 */
 		inline const char *c_str() const { return this->_string.c_str(); }
+		inline const char *data() const { return this->_string.data(); }
 		inline std::string &str() { return this->_string; }
 		inline const std::string &str() const { return this->_string; }
 		inline ci::string ci_str() const { return ci::string(this->_string.c_str()); }
@@ -159,24 +159,24 @@ namespace Anope
 		 * Trim leading and trailing white spaces from the string.
 		 */
 
-		inline string& ltrim()
+		inline string& ltrim(const Anope::string &what = " \t\r\n")
 		{
-			while (!this->_string.empty() && isspace(this->_string[0]))
+			while (!this->_string.empty() && what.find(this->_string[0]) != Anope::string::npos)
 				this->_string.erase(this->_string.begin());
 			return *this;
 		}
 
-		inline string& rtrim()
+		inline string& rtrim(const Anope::string &what = " \t\r\n")
 		{
-			while (!this->_string.empty() && isspace(this->_string[this->_string.length() - 1]))
+			while (!this->_string.empty() && what.find(this->_string[this->_string.length() - 1]) != Anope::string::npos)
 				this->_string.erase(this->_string.length() - 1);
 			return *this;
 		}
 
-		inline string& trim()
+		inline string& trim(const Anope::string &what = " \t\r\n")
 		{
-			this->ltrim();
-			this->rtrim();
+			this->ltrim(what);
+			this->rtrim(what);
 			return *this;
 		}
 
@@ -336,7 +336,9 @@ namespace Anope
 	template<typename T> class multimap : public std::multimap<string, T, ci::less> { };
 	template<typename T> class hash_map : public TR1NS::unordered_map<string, T, hash_ci, compare> { };
 
+#ifndef REPRODUCIBLE_BUILD
 	static const char *const compiled = __TIME__ " " __DATE__;
+#endif
 
 	/** The time Anope started.
 	 */
@@ -542,7 +544,7 @@ namespace Anope
 	extern CoreExport Anope::string Random(size_t len);
 }
 
-/** sepstream allows for splitting token seperated lists.
+/** sepstream allows for splitting token separated lists.
  * Each successive call to sepstream::GetToken() returns
  * the next token, until none remain, at which point the method returns
  * an empty string.
@@ -614,17 +616,17 @@ class CoreExport sepstream
 	bool StreamEnd();
 };
 
-/** A derived form of sepstream, which seperates on commas
+/** A derived form of sepstream, which separates on commas
  */
 class commasepstream : public sepstream
 {
  public:
 	/** Initialize with comma seperator
 	 */
-	commasepstream(const Anope::string &source) : sepstream(source, ',') { }
+	commasepstream(const Anope::string &source, bool allowempty = false) : sepstream(source, ',', allowempty) { }
 };
 
-/** A derived form of sepstream, which seperates on spaces
+/** A derived form of sepstream, which separates on spaces
  */
 class spacesepstream : public sepstream
 {

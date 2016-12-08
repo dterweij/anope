@@ -1,6 +1,6 @@
 /* MemoServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -49,27 +49,39 @@ class MemoServCore : public Module, public MemoServService
 		if (mi == NULL)
 			return MEMO_INVALID_TARGET;
 
-		User *sender = User::Find(source);
-		if (sender != NULL && !sender->HasPriv("memoserv/no-limit") && !force)
+		Anope::string sender_display = source;
+
+		User *sender = User::Find(source, true);
+		if (sender != NULL)
 		{
-			time_t send_delay = Config->GetModule("memoserv")->Get<time_t>("senddelay");
-			if (send_delay > 0 && sender->lastmemosend + send_delay > Anope::CurTime)
-				return MEMO_TOO_FAST;
-			else if (!mi->memomax)
-				return MEMO_TARGET_FULL;
-			else if (mi->memomax > 0 && mi->memos->size() >= static_cast<unsigned>(mi->memomax))
-				return MEMO_TARGET_FULL;
-			else if (mi->HasIgnore(sender))
-				return MEMO_SUCCESS;
+			if (!sender->HasPriv("memoserv/no-limit") && !force)
+			{
+				time_t send_delay = Config->GetModule("memoserv")->Get<time_t>("senddelay");
+				if (send_delay > 0 && sender->lastmemosend + send_delay > Anope::CurTime)
+					return MEMO_TOO_FAST;
+				else if (!mi->memomax)
+					return MEMO_TARGET_FULL;
+				else if (mi->memomax > 0 && mi->memos->size() >= static_cast<unsigned>(mi->memomax))
+					return MEMO_TARGET_FULL;
+				else if (mi->HasIgnore(sender))
+					return MEMO_SUCCESS;
+			}
+
+			NickCore *acc = sender->Account();
+			if (acc != NULL)
+			{
+				sender_display = acc->display;
+			}
 		}
 
 		if (sender != NULL)
 			sender->lastmemosend = Anope::CurTime;
 
 		Memo *m = new Memo();
+		m->mi = mi;
 		mi->memos->push_back(m);
 		m->owner = target;
-		m->sender = source;
+		m->sender = sender_display;
 		m->time = Anope::CurTime;
 		m->text = message;
 		m->unread = true;
@@ -103,7 +115,7 @@ class MemoServCore : public Module, public MemoServService
 				for (unsigned i = 0; i < nc->aliases->size(); ++i)
 				{
 					const NickAlias *na = nc->aliases->at(i);
-					User *user = User::Find(na->nick);
+					User *user = User::Find(na->nick, true);
 					if (user && user->IsIdentified())
 						user->SendMessage(MemoServ, MEMO_NEW_MEMO_ARRIVED, source.c_str(), Config->StrictPrivmsg.c_str(), MemoServ->nick.c_str(), mi->memos->size());
 				}

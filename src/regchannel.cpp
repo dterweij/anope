@@ -1,13 +1,12 @@
 /* Registered channel functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -132,41 +131,18 @@ ChannelInfo::ChannelInfo(const ChannelInfo &ci) : Serializable("ChannelInfo"),
 	*this = ci;
 
 	if (this->founder)
-		--this->founder->channelcount;
+		++this->founder->channelcount;
 
 	this->access->clear();
 	this->akick->clear();
-
-	for (unsigned i = 0; i < ci.GetAccessCount(); ++i)
-	{
-		const ChanAccess *taccess = ci.GetAccess(i);
-		AccessProvider *provider = taccess->provider;
-
-		ChanAccess *newaccess = provider->Create();
-		newaccess->ci = this;
-		newaccess->mask = taccess->mask;
-		newaccess->creator = taccess->creator;
-		newaccess->last_seen = taccess->last_seen;
-		newaccess->created = taccess->created;
-		newaccess->AccessUnserialize(taccess->AccessSerialize());
-
-		this->AddAccess(newaccess);
-	}
-
-	for (unsigned i = 0; i < ci.GetAkickCount(); ++i)
-	{
-		const AutoKick *takick = ci.GetAkick(i);
-		if (takick->nc)
-			this->AddAkick(takick->creator, takick->nc, takick->reason, takick->addtime, takick->last_used);
-		else
-			this->AddAkick(takick->creator, takick->mask, takick->reason, takick->addtime, takick->last_used);
-	}
 
 	FOREACH_MOD(OnCreateChan, (this));
 }
 
 ChannelInfo::~ChannelInfo()
 {
+	UnsetExtensibles();
+
 	FOREACH_MOD(OnDelChan, (this));
 
 	Log(LOG_DEBUG) << "Deleting channel " << this->name;
@@ -181,7 +157,7 @@ ChannelInfo::~ChannelInfo()
 		if (this->c)
 		{
 			if (this->c && this->c->CheckDelete())
-				delete this->c;
+				this->c->QueueForDeletion();
 
 			this->c = NULL;
 		}
@@ -201,9 +177,6 @@ ChannelInfo::~ChannelInfo()
 			delete this->memos.GetMemo(i);
 		this->memos.memos->clear();
 	}
-
-	if (this->founder)
-		--this->founder->channelcount;
 }
 
 void ChannelInfo::Serialize(Serialize::Data &data) const
@@ -272,7 +245,7 @@ Serializable* ChannelInfo::Unserialize(Serializable *obj, Serialize::Data &data)
 			}
 			catch (const ConvertException &) { }
 	}
-	BotInfo *bi = BotInfo::Find(sbi);
+	BotInfo *bi = BotInfo::Find(sbi, true);
 	if (*ci->bi != bi)
 	{
 		if (bi)
@@ -399,19 +372,6 @@ BotInfo *ChannelInfo::WhoSends() const
 void ChannelInfo::AddAccess(ChanAccess *taccess)
 {
 	this->access->push_back(taccess);
-
-	const NickAlias *na = NickAlias::Find(taccess->mask);
-	if (na != NULL)
-	{
-		na->nc->AddChannelReference(this);
-		taccess->nc = na->nc;
-	}
-	else
-	{
-		ChannelInfo *ci = ChannelInfo::Find(taccess->mask);
-		if (ci != NULL)
-			ci->AddChannelReference(this->name);
-	}
 }
 
 ChanAccess *ChannelInfo::GetAccess(unsigned index) const
@@ -424,7 +384,40 @@ ChanAccess *ChannelInfo::GetAccess(unsigned index) const
 	return acc;
 }
 
-AccessGroup ChannelInfo::AccessFor(const User *u)
+static void FindMatchesRecurse(ChannelInfo *ci, const User *u, const NickCore *account, unsigned int depth, std::vector<ChanAccess::Path> &paths, ChanAccess::Path &path)
+{
+	if (depth > ChanAccess::MAX_DEPTH)
+		return;
+
+	for (unsigned int i = 0; i < ci->GetAccessCount(); ++i)
+	{
+		ChanAccess *a = ci->GetAccess(i);
+		ChannelInfo *next = NULL;
+
+		if (a->Matches(u, account, next))
+		{
+			ChanAccess::Path next_path = path;
+			next_path.push_back(a);
+
+			paths.push_back(next_path);
+		}
+		else if (next)
+		{
+			ChanAccess::Path next_path = path;
+			next_path.push_back(a);
+
+			FindMatchesRecurse(next, u, account, depth + 1, paths, next_path);
+		}
+	}
+}
+
+static void FindMatches(AccessGroup &group, ChannelInfo *ci, const User *u, const NickCore *account)
+{
+	ChanAccess::Path path;
+	FindMatchesRecurse(ci, u, account, 0, group.paths, path);
+}
+
+AccessGroup ChannelInfo::AccessFor(const User *u, bool updateLastUsed)
 {
 	AccessGroup group;
 
@@ -444,25 +437,26 @@ AccessGroup ChannelInfo::AccessFor(const User *u)
 	group.ci = this;
 	group.nc = nc;
 
-	for (unsigned i = 0, end = this->GetAccessCount(); i < end; ++i)
-	{
-		ChanAccess *a = this->GetAccess(i);
-		if (a->Matches(u, u->Account(), group.path))
-			group.push_back(a);
-	}
+	FindMatches(group, this, u, u->Account());
 
-	if (group.founder || !group.empty())
+	if (group.founder || !group.paths.empty())
 	{
-		this->last_used = Anope::CurTime;
+		if (updateLastUsed)
+			this->last_used = Anope::CurTime;
 
-		for (unsigned i = 0; i < group.size(); ++i)
-			group[i]->last_seen = Anope::CurTime;
+		for (unsigned i = 0; i < group.paths.size(); ++i)
+		{
+			ChanAccess::Path &p = group.paths[i];
+
+			for (unsigned int j = 0; j < p.size(); ++j)
+				p[j]->last_seen = Anope::CurTime;
+		}
 	}
 
 	return group;
 }
 
-AccessGroup ChannelInfo::AccessFor(const NickCore *nc)
+AccessGroup ChannelInfo::AccessFor(const NickCore *nc, bool updateLastUsed)
 {
 	AccessGroup group;
 
@@ -470,17 +464,13 @@ AccessGroup ChannelInfo::AccessFor(const NickCore *nc)
 	group.ci = this;
 	group.nc = nc;
 
-	for (unsigned i = 0, end = this->GetAccessCount(); i < end; ++i)
-	{
-		ChanAccess *a = this->GetAccess(i);
-		if (a->Matches(NULL, nc, group.path))
-			group.push_back(a);
-	}
+	FindMatches(group, this, NULL, nc);
 
-	if (group.founder || !group.empty())
-		this->last_used = Anope::CurTime;
+	if (group.founder || !group.paths.empty())
+		if (updateLastUsed)
+			this->last_used = Anope::CurTime;
 
-		/* don't update access last seen here, this isn't the user requesting access */
+	/* don't update access last seen here, this isn't the user requesting access */
 
 	return group;
 }
@@ -490,28 +480,34 @@ unsigned ChannelInfo::GetAccessCount() const
 	return this->access->size();
 }
 
-unsigned ChannelInfo::GetDeepAccessCount() const
+static unsigned int GetDeepAccessCount(const ChannelInfo *ci, std::set<const ChannelInfo *> &seen, unsigned int depth)
 {
-	ChanAccess::Path path;
-	for (unsigned i = 0, end = this->GetAccessCount(); i < end; ++i)
+	if (depth > ChanAccess::MAX_DEPTH || seen.count(ci))
+		return 0;
+	seen.insert(ci);
+
+	unsigned int total = 0;
+
+	for (unsigned int i = 0; i < ci->GetAccessCount(); ++i)
 	{
-		ChanAccess *a = this->GetAccess(i);
-		a->Matches(NULL, NULL, path);
+		ChanAccess::Path path;
+		ChanAccess *a = ci->GetAccess(i);
+		ChannelInfo *next = NULL;
+
+		a->Matches(NULL, NULL, next);
+		++total;
+
+		if (next)
+			total += GetDeepAccessCount(ci, seen, depth + 1);
 	}
 
-	unsigned count = this->GetAccessCount();
-	std::set<const ChannelInfo *> channels;
-	channels.insert(this);
-	for (ChanAccess::Set::iterator it = path.first.begin(); it != path.first.end(); ++it)
-	{
-		const ChannelInfo *ci = it->first->ci;
-		if (!channels.count(ci))
-		{
-			channels.count(ci);
-			count += ci->GetAccessCount();
-		}
-	}
-	return count;
+	return total;
+}
+
+unsigned ChannelInfo::GetDeepAccessCount() const
+{
+	std::set<const ChannelInfo *> seen;
+	return ::GetDeepAccessCount(this, seen, 0);
 }
 
 ChanAccess *ChannelInfo::EraseAccess(unsigned index)
@@ -592,6 +588,11 @@ void ChannelInfo::ClearAkick()
 		delete this->akick->back();
 }
 
+const Anope::map<int16_t> &ChannelInfo::GetLevelEntries()
+{
+	return this->levels;
+}
+
 int16_t ChannelInfo::GetLevel(const Anope::string &priv) const
 {
 	if (PrivilegeManager::FindPrivilege(priv) == NULL)
@@ -608,6 +609,12 @@ int16_t ChannelInfo::GetLevel(const Anope::string &priv) const
 
 void ChannelInfo::SetLevel(const Anope::string &priv, int16_t level)
 {
+	if (PrivilegeManager::FindPrivilege(priv) == NULL)
+	{
+		Log(LOG_DEBUG) << "Unknown privilege " + priv;
+		return;
+	}
+
 	this->levels[priv] = level;
 }
 

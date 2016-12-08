@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef SERVICE_H
@@ -20,7 +19,7 @@
 /** Anything that inherits from this class can be referred to
  * using ServiceReference. Any interfaces provided by modules,
  * such as commands, use this. This is also used for modules
- * that publish a service (m_ssl, etc).
+ * that publish a service (m_ssl_openssl, etc).
  */
 class CoreExport Service : public virtual Base
 {
@@ -148,7 +147,7 @@ class ServiceReference : public Reference<T>
 			 * creates its own service type (that other modules must include the header file
 			 * for), as the core is not compiled with it so there is no RTTI for it.
 			 */
-			this->ref = static_cast<T *>(Service::FindService(this->type, this->name));
+			this->ref = static_cast<T *>(::Service::FindService(this->type, this->name));
 			if (this->ref)
 				this->ref->AddReference(this);
 		}
@@ -172,4 +171,3 @@ class ServiceAlias
 };
 
 #endif // SERVICE_H
-

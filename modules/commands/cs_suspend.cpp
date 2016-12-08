@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,18 +10,18 @@
  */
 
 #include "module.h"
-#include "modules/cs_suspend.h"
+#include "modules/suspend.h"
 
-struct CSSuspendInfoImpl : CSSuspendInfo, Serializable
+struct CSSuspendInfo : SuspendInfo, Serializable
 {
-	CSSuspendInfoImpl(Extensible *) : Serializable("CSSuspendInfo") { }
+	CSSuspendInfo(Extensible *) : Serializable("CSSuspendInfo") { }
 
 	void Serialize(Serialize::Data &data) const anope_override
 	{
-		data["chan"] << chan;
+		data["chan"] << what;
 		data["by"] << by;
 		data["reason"] << reason;
-		data["time"] << time;
+		data["time"] << when;
 		data["expires"] << expires;
 	}
 
@@ -30,21 +30,21 @@ struct CSSuspendInfoImpl : CSSuspendInfo, Serializable
 		Anope::string schan;
 		data["chan"] >> schan;
 
-		CSSuspendInfoImpl *si;
+		CSSuspendInfo *si;
 		if (obj)
-			si = anope_dynamic_static_cast<CSSuspendInfoImpl *>(obj);
+			si = anope_dynamic_static_cast<CSSuspendInfo *>(obj);
 		else
 		{
 			ChannelInfo *ci = ChannelInfo::Find(schan);
 			if (!ci)
 				return NULL;
-			si = ci->Extend<CSSuspendInfoImpl>("CS_SUSPENDED");
-			data["chan"] >> si->chan;
+			si = ci->Extend<CSSuspendInfo>("CS_SUSPENDED");
+			data["chan"] >> si->what;
 		}
 
 		data["by"] >> si->by;
 		data["reason"] >> si->reason;
-		data["time"] >> si->time;
+		data["time"] >> si->when;
 		data["expires"] >> si->expires;
 		return si;
 	}
@@ -99,10 +99,10 @@ class CommandCSSuspend : public Command
 		}
 
 		CSSuspendInfo *si = ci->Extend<CSSuspendInfo>("CS_SUSPENDED");
-		si->chan = ci->name;
+		si->what = ci->name;
 		si->by = source.GetNick();
 		si->reason = reason;
-		si->time = Anope::CurTime;
+		si->when = Anope::CurTime;
 		si->expires = expiry_secs ? expiry_secs + Anope::CurTime : 0;
 
 		if (ci->c)
@@ -121,7 +121,7 @@ class CommandCSSuspend : public Command
 				ci->c->Kick(NULL, users[i], "%s", !reason.empty() ? reason.c_str() : Language::Translate(users[i], _("This channel has been suspended.")));
 		}
 
-		Log(LOG_ADMIN, source, this, ci) << " (" << (!reason.empty() ? reason : "No reason") << "), expires on " << (expiry_secs ? Anope::strftime(Anope::CurTime + expiry_secs) : "never");
+		Log(LOG_ADMIN, source, this, ci) << "(" << (!reason.empty() ? reason : "No reason") << "), expires on " << (expiry_secs ? Anope::strftime(Anope::CurTime + expiry_secs) : "never");
 		source.Reply(_("Channel \002%s\002 is now suspended."), ci->name.c_str());
 
 		FOREACH_MOD(OnChanSuspend, (ci));
@@ -173,7 +173,7 @@ class CommandCSUnSuspend : public Command
 			return;
 		}
 
-		Log(LOG_ADMIN, source, this, ci) << " which was suspended by " << si->by << " for: " << (!si->reason.empty() ? si->reason : "No reason");
+		Log(LOG_ADMIN, source, this, ci) << "which was suspended by " << si->by << " for: " << (!si->reason.empty() ? si->reason : "No reason");
 
 		ci->Shrink<CSSuspendInfo>("CS_SUSPENDED");
 
@@ -198,31 +198,46 @@ class CSSuspend : public Module
 {
 	CommandCSSuspend commandcssuspend;
 	CommandCSUnSuspend commandcsunsuspend;
-	ExtensibleItem<CSSuspendInfoImpl> suspend;
+	ExtensibleItem<CSSuspendInfo> suspend;
 	Serialize::Type suspend_type;
+	std::vector<Anope::string> show;
+
+	struct trim
+	{
+		Anope::string operator()(Anope::string s) const
+		{
+			return s.trim();
+		}
+	};
+
+	bool Show(CommandSource &source, const Anope::string &what) const
+	{
+		return source.IsOper() || std::find(show.begin(), show.end(), what) != show.end();
+	}
 
  public:
 	CSSuspend(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
 		commandcssuspend(this), commandcsunsuspend(this), suspend(this, "CS_SUSPENDED"),
-		suspend_type("CSSuspendInfo", CSSuspendInfoImpl::Unserialize)
+		suspend_type("CSSuspendInfo", CSSuspendInfo::Unserialize)
 	{
 	}
 
 	void OnChanInfo(CommandSource &source, ChannelInfo *ci, InfoFormatter &info, bool show_hidden) anope_override
 	{
 		CSSuspendInfo *si = suspend.Get(ci);
-		if (si)
-		{
+		if (!si)
+			return;
+
+		if (show_hidden || Show(source, "suspended"))
 			info[_("Suspended")] = _("This channel is \002suspended\002.");
-			if (!si->by.empty())
-				info[_("Suspended by")] = si->by;
-			if (!si->reason.empty())
-				info[_("Suspend reason")] = si->reason;
-			if (si->time)
-				info[_("Suspended on")] = Anope::strftime(si->time, source.GetAccount(), true);
-			if (si->expires)
-				info[_("Suspension expires")] = Anope::strftime(si->expires, source.GetAccount(), true);
-		}
+		if (!si->by.empty() && (show_hidden || Show(source, "by")))
+			info[_("Suspended by")] = si->by;
+		if (!si->reason.empty() && (show_hidden || Show(source, "reason")))
+			info[_("Suspend reason")] = si->reason;
+		if (si->when && (show_hidden || Show(source, "on")))
+			info[_("Suspended on")] = Anope::strftime(si->when, source.GetAccount());
+		if (si->expires && (show_hidden || Show(source, "expires")))
+			info[_("Suspension expires")] = Anope::strftime(si->expires, source.GetAccount());
 	}
 
 	void OnPreChanExpire(ChannelInfo *ci, bool &expire) anope_override

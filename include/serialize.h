@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef SERIALIZE_H
@@ -60,14 +59,14 @@ class CoreExport Serializable : public virtual Base
 	 * constructed before other objects are if it isn't.
 	 */
 	static std::list<Serializable *> *SerializableItems;
+	friend class Serialize::Type;
 	/* The type of item this object is */
 	Serialize::Type *s_type;
- private:
  	/* Iterator into serializable_items */
 	std::list<Serializable *>::iterator s_iter;
-	/* The hash of the last serialized form of this object commited to the database */
+	/* The hash of the last serialized form of this object committed to the database */
 	size_t last_commit;
-	/* The last time this object was commited to the database */
+	/* The last time this object was committed to the database */
 	time_t last_commit_time;
 
  protected:
@@ -109,7 +108,7 @@ class CoreExport Serializable : public virtual Base
  * of class that inherits from Serialiable. Used for unserializing objects
  * of this type, as it requires a function pointer to a static member function.
  */
-class CoreExport Serialize::Type
+class CoreExport Serialize::Type : public Base
 {
 	typedef Serializable* (*unserialize_func)(Serializable *obj, Serialize::Data &);
 
@@ -188,7 +187,7 @@ class Serialize::Checker
 {
 	Anope::string name;
 	T obj;
-	mutable Serialize::Type *type;
+	mutable ::Reference<Serialize::Type> type;
 
 	inline void Check() const
 	{

@@ -1,5 +1,6 @@
 /*
- * (C) 2003-2014 Anope Team
+ *
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -206,12 +207,13 @@ class ModuleProxyScan : public Module
 
 		void Tick(time_t) anope_override
 		{
-			for (std::set<ProxyConnect *>::iterator it = ProxyConnect::proxies.begin(), it_end = ProxyConnect::proxies.end(); it != it_end; ++it)
+			for (std::set<ProxyConnect *>::iterator it = ProxyConnect::proxies.begin(), it_end = ProxyConnect::proxies.end(); it != it_end;)
 			{
 				ProxyConnect *p = *it;
+				++it;
 
 				if (p->created + this->GetSecs() < Anope::CurTime)
-					p->flags[SF_DEAD] = true;
+					delete p;
 			}
 		}
 	} connectionTimeout;
@@ -333,15 +335,13 @@ class ModuleProxyScan : public Module
 			return;
 
 		/* At this time we only support IPv4 */
-		sockaddrs user_ip;
-		user_ip.pton(AF_INET, user->ip);
-		if (!user_ip.valid())
+		if (!user->ip.valid() || user->ip.sa.sa_family != AF_INET)
 			/* User doesn't have a valid IPv4 IP (ipv6/spoof/etc) */
 			return;
 
 		if (!this->con_notice.empty() && !this->con_source.empty())
 		{
-			BotInfo *bi = BotInfo::Find(this->con_source);
+			BotInfo *bi = BotInfo::Find(this->con_source, true);
 			if (bi)
 				user->SendMessage(bi, this->con_notice);
 		}
@@ -363,7 +363,7 @@ class ModuleProxyScan : public Module
 							con = new SOCKS5ProxyConnect(p, p.ports[k]);
 						else
 							continue;
-						con->Connect(user->ip, p.ports[k]);
+						con->Connect(user->ip.addr(), p.ports[k]);
 					}
 					catch (const SocketException &ex)
 					{

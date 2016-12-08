@@ -1,9 +1,22 @@
+/*
+ *
+ * (C) 2010-2016 Anope Team
+ * Contact us at team@anope.org
+ *
+ * Please read COPYING and README for further details.
+ */
+
 /* RequiredLibraries: mysqlclient */
+/* RequiredWindowsLibraries: libmysql */
 
 #include "module.h"
 #include "modules/sql.h"
 #define NO_CLIENT_LONG_LONG
-#include <mysql/mysql.h>
+#ifdef WIN32
+# include <mysql.h>
+#else
+# include <mysql/mysql.h>
+#endif
 
 using namespace SQL;
 
@@ -433,7 +446,15 @@ Query MySQLService::BuildInsert(const Anope::string &table, unsigned int id, Dat
 	{
 		Anope::string buf;
 		*it->second >> buf;
-		query.SetValue(it->first, buf);
+
+		bool escape = true;
+		if (buf.empty())
+		{
+			buf = "NULL";
+			escape = false;
+		}
+
+		query.SetValue(it->first, buf, escape);
 	}
 	
 	return query;

@@ -1,6 +1,6 @@
 /* Chanstats core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -100,9 +100,7 @@ class CSTop : public Module
 
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
-		prefix = conf->GetModule("m_chanstats")->Get<const Anope::string>("prefix");
-		if (prefix.empty())
-			prefix = "anope_";
+		prefix = conf->GetModule("m_chanstats")->Get<const Anope::string>("prefix", "anope_");
 		this->sql = ServiceReference<SQL::Provider>("SQL::Provider", conf->GetModule("m_chanstats")->Get<const Anope::string>("engine"));
 	}
 
@@ -151,10 +149,10 @@ class CSTop : public Module
 				source.Reply(_("Top %i of %s"), limit, (is_global ? "Network" : channel.c_str()));
 				for (int i = 0; i < res.Rows(); ++i)
 				{
-					source.Reply(_("%2lu \002%-16s\002 letters: %s, words: %s, lines: %s, smileys %s, actions: %s"),
+					source.Reply(_("%2lu \002%-16s\002 letters: %s, words: %s, lines: %s, smileys: %s, actions: %s"),
 						i+1, res.Get(i, "nick").c_str(), res.Get(i, "letters").c_str(),
 						res.Get(i, "words").c_str(), res.Get(i, "line").c_str(), 
-						res.Get(0, "smileys").c_str(), res.Get(0, "actions").c_str());
+						res.Get(i, "smileys").c_str(), res.Get(i, "actions").c_str());
 				}
 			}
 			else

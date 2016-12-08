@@ -1,10 +1,9 @@
 /*
  *
- * Copyright (C) 2008-2011 Robin Burchell <w00t@inspircd.org>
- * Copyright (C) 2008-2014 Anope Team <team@anope.org>
+ * (C) 2008-2011 Robin Burchell <w00t@inspircd.org>
+ * (C) 2008-2016 Anope Team <team@anope.org>
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #include "services.h"
@@ -118,7 +117,7 @@ void CommandSource::Reply(const Anope::string &message)
 		this->reply->SendMessage(this->service, tok);
 }
 
-Command::Command(Module *o, const Anope::string &sname, size_t minparams, size_t maxparams) : Service(o, "Command", sname), max_params(maxparams), min_params(minparams), module(owner)
+Command::Command(Module *o, const Anope::string &sname, size_t minparams, size_t maxparams) : Service(o, "Command", sname), max_params(maxparams), min_params(minparams), module(o)
 {
 	allow_unregistered = require_user = false;
 }
@@ -218,7 +217,7 @@ void Command::Run(CommandSource &source, const Anope::string &message)
 	if (it == source.service->commands.end())
 	{
 		if (has_help)
-			source.Reply(_("Unknown command \002%s\002. \"%s %s HELP\" for help."), message.c_str(), Config->StrictPrivmsg.c_str(), source.service->nick.c_str());
+			source.Reply(_("Unknown command \002%s\002. \"%s%s HELP\" for help."), message.c_str(), Config->StrictPrivmsg.c_str(), source.service->nick.c_str());
 		else
 			source.Reply(_("Unknown command \002%s\002."), message.c_str());
 		return;
@@ -236,18 +235,6 @@ void Command::Run(CommandSource &source, const Anope::string &message)
 		return;
 	}
 
-	if (c->RequireUser() && !source.GetUser())
-		return;
-
-	// Command requires registered users only
-	if (!c->AllowUnregistered() && !source.nc)
-	{
-		source.Reply(NICK_IDENTIFY_REQUIRED);
-		if (source.GetUser())
-			Log(LOG_NORMAL, "access_denied_unreg", source.service) << "Access denied for unregistered user " << source.GetUser()->GetMask() << " with command " << it->first;
-		return;
-	}
-
 	for (unsigned i = 0, j = params.size() - (count - 1); i < j; ++i)
 		params.erase(params.begin());
 
@@ -257,17 +244,34 @@ void Command::Run(CommandSource &source, const Anope::string &message)
 		params.erase(params.begin() + c->max_params);
 	}
 
-	source.command = it->first;
+	c->Run(source, it->first, info, params);
+}
+
+void Command::Run(CommandSource &source, const Anope::string &cmdname, const CommandInfo &info, std::vector<Anope::string> &params)
+{
+	if (this->RequireUser() && !source.GetUser())
+		return;
+
+	// Command requires registered users only
+	if (!this->AllowUnregistered() && !source.nc)
+	{
+		source.Reply(NICK_IDENTIFY_REQUIRED);
+		if (source.GetUser())
+			Log(LOG_NORMAL, "access_denied_unreg", source.service) << "Access denied for unregistered user " << source.GetUser()->GetMask() << " with command " << cmdname;
+		return;
+	}
+
+	source.command = cmdname;
 	source.permission = info.permission;
 
 	EventReturn MOD_RESULT;
-	FOREACH_RESULT(OnPreCommand, MOD_RESULT, (source, c, params));
+	FOREACH_RESULT(OnPreCommand, MOD_RESULT, (source, this, params));
 	if (MOD_RESULT == EVENT_STOP)
 		return;
 
-	if (params.size() < c->min_params)
+	if (params.size() < this->min_params)
 	{
-		c->OnSyntaxError(source, !params.empty() ? params[params.size() - 1] : "");
+		this->OnSyntaxError(source, !params.empty() ? params[params.size() - 1] : "");
 		return;
 	}
 
@@ -276,12 +280,12 @@ void Command::Run(CommandSource &source, const Anope::string &message)
 	{
 		source.Reply(ACCESS_DENIED);
 		if (source.GetUser())
-			Log(LOG_NORMAL, "access_denied", source.service) << "Access denied for user " << source.GetUser()->GetMask() << " with command " << it->first;
+			Log(LOG_NORMAL, "access_denied", source.service) << "Access denied for user " << source.GetUser()->GetMask() << " with command " << cmdname;
 		return;
 	}
 
-	c->Execute(source, params);
-	FOREACH_MOD(OnPostCommand, (source, c, params));
+	this->Execute(source, params);
+	FOREACH_MOD(OnPostCommand, (source, this, params));
 }
 
 bool Command::FindCommandFromService(const Anope::string &command_service, BotInfo* &bot, Anope::string &name)

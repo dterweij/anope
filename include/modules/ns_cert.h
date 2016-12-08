@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -59,4 +59,12 @@ struct NSCertList
 	virtual void ClearCert() = 0;
 
 	virtual void Check() = 0;
+};
+
+class CertService : public Service
+{
+ public:
+	CertService(Module *c) : Service(c, "CertService", "certs") { }
+
+	virtual NickCore* FindAccountFromCert(const Anope::string &cert) = 0;
 };

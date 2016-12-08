@@ -1,6 +1,6 @@
 /* MemoServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -30,14 +30,14 @@ static void rsend_notify(CommandSource &source, MemoInfo *mi, Memo *m, const Ano
 		if (!nc)
 			return;
 
-		/* Text of the memo varies if the recepient was a
+		/* Text of the memo varies if the recipient was a
 		   nick or channel */
 		Anope::string text = Anope::printf(Language::Translate(na->nc, _("\002[auto-memo]\002 The memo you sent to %s has been viewed.")), targ.c_str());
 
 		/* Send notification */
 		MemoServService->Send(source.GetNick(), m->sender, text, true);
 
-		/* Notify recepient of the memo that a notification has
+		/* Notify recipient of the memo that a notification has
 		   been sent to the sender */
 		source.Reply(_("A notification memo has been sent to %s informing him/her you have\n"
 				"read his/her memo."), nc->display.c_str());
@@ -52,9 +52,17 @@ class MemoListCallback : public NumberList
 	CommandSource &source;
 	MemoInfo *mi;
 	const ChannelInfo *ci;
+	bool found;
  public:
 	MemoListCallback(CommandSource &_source, MemoInfo *_mi, const ChannelInfo *_ci, const Anope::string &numlist) : NumberList(numlist, false), source(_source), mi(_mi), ci(_ci)
 	{
+		found = false;
+	}
+
+	~MemoListCallback()
+	{
+		if (!found)
+			source.Reply(_("No memos to display."));
 	}
 
 	void HandleNumber(unsigned number) anope_override
@@ -63,6 +71,7 @@ class MemoListCallback : public NumberList
 			return;
 
 		MemoListCallback::DoRead(source, mi, ci, number - 1);
+		found = true;
 	}
 
 	static void DoRead(CommandSource &source, MemoInfo *mi, const ChannelInfo *ci, unsigned index)
@@ -70,7 +79,7 @@ class MemoListCallback : public NumberList
 		Memo *m = mi->GetMemo(index);
 		if (!m)
 			return;
-			
+
 		if (ci)
 			source.Reply(_("Memo %d from %s (%s)."), index + 1, m->sender.c_str(), Anope::strftime(m->time, source.GetAccount()).c_str());
 		else
@@ -101,7 +110,7 @@ class CommandMSRead : public Command
 	CommandMSRead(Module *creator) : Command(creator, "memoserv/read", 1, 2)
 	{
 		this->SetDesc(_("Read a memo or memos"));
-		this->SetSyntax(_("[\037channel\037] {\037num\037 | \037list\037 | LAST | NEW}"));
+		this->SetSyntax(_("[\037channel\037] {\037num\037 | \037list\037 | LAST | NEW | ALL}"));
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
@@ -132,7 +141,7 @@ class CommandMSRead : public Command
 		else
 			mi = &source.nc->memos;
 
-		if (numstr.empty() || (!numstr.equals_ci("LAST") && !numstr.equals_ci("NEW") && !numstr.is_number_only()))
+		if (numstr.empty() || (!numstr.equals_ci("LAST") && !numstr.equals_ci("NEW") && !numstr.equals_ci("ALL") && numstr.find_first_not_of("0123456789.,-") != Anope::string::npos))
 			this->OnSyntaxError(source, numstr);
 		else if (mi->memos->empty())
 		{
@@ -167,6 +176,13 @@ class CommandMSRead : public Command
 				for (i = 0, end = mi->memos->size() - 1; i < end; ++i);
 				MemoListCallback::DoRead(source, mi, ci, i);
 			}
+			else if (numstr.equals_ci("ALL"))
+			{
+				for (i = 0, end = mi->memos->size(); i < end; ++i)
+				{
+					MemoListCallback::DoRead(source, mi, ci, i);
+				}
+			}
 			else /* number[s] */
 			{
 				MemoListCallback list(source, mi, ci, numstr);
@@ -182,9 +198,10 @@ class CommandMSRead : public Command
 		source.Reply(" ");
 		source.Reply(_("Sends you the text of the memos specified. If LAST is\n"
 				"given, sends you the memo you most recently received. If\n"
-				"NEW is given, sends you all of your new memos.  Otherwise,\n"
-				"sends you memo number \037num\037. You can also give a list of\n"
-				"numbers, as in this example:\n"
+				"NEW is given, sends you all of your new memos.  If ALL is\n"
+				"given, sends you all of your memos. Otherwise, sends you\n"
+				"memo number \037num\037. You can also give a list of numbers,\n"
+				"as in this example:\n"
 				" \n"
 				"   \002READ 2-5,7-9\002\n"
 				"      Displays memos numbered 2 through 5 and 7 through 9."));

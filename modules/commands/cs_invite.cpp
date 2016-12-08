@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -73,13 +73,14 @@ class CommandCSInvite : public Command
 			if (u2 != u)
 			{
 				source.Reply(_("\002%s\002 has been invited to \002%s\002."), u2->nick.c_str(), c->name.c_str());
+				u2->SendMessage(ci->WhoSends(), _("You have been invited to \002%s\002 by \002%s\002."), c->name.c_str(), source.GetNick().c_str());
 				Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "for " << u2->nick;
 			}
 			else
 			{
+				u2->SendMessage(ci->WhoSends(), _("You have been invited to \002%s\002."), c->name.c_str());
 				Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci);
 			}
-			u2->SendMessage(ci->WhoSends(), _("You have been invited to \002%s\002."), c->name.c_str());
 		}
 	}
 
@@ -90,7 +91,7 @@ class CommandCSInvite : public Command
 		source.Reply(_("Tells %s to invite you or an optionally specified\n"
 				"nick into the given channel.\n"
 				" \n"
-				"By default, limited to AOPs or those with level 5 and above\n"
+				"By default, limited to AOPs or those with level 5 access and above\n"
 				"on the channel."), source.service->nick.c_str());
 		return true;
 	}

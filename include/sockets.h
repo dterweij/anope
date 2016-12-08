@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef SOCKETS_H
@@ -39,6 +38,10 @@ union CoreExport sockaddrs
 	 */
 	void clear();
 
+	/** Get address family.
+	 */
+	int family() const;
+
 	/** Get the size of the sockaddr we represent
 	 * @return The size
 	 */
@@ -59,7 +62,7 @@ union CoreExport sockaddrs
 
 	/** Check if this sockaddr has data in it
 	 */
-	bool operator()() const;
+	bool valid() const;
 
 	/** Compares with sockaddr with another. Compares address type, port, and address
 	 * @return true if they are the same
@@ -82,8 +85,6 @@ union CoreExport sockaddrs
 	 * @throws A socket exception if given an invalid structure
 	 */
 	void ntop(int type, const void *src);
-
-	bool valid() const;
 };
 
 class CoreExport cidr
@@ -94,6 +95,7 @@ class CoreExport cidr
  public:
  	cidr(const Anope::string &ip);
 	cidr(const Anope::string &ip, unsigned char len);
+	cidr(const sockaddrs &ip, unsigned char len);
 	Anope::string mask() const;
 	bool match(const sockaddrs &other);
 	bool valid() const;
@@ -347,7 +349,7 @@ class CoreExport BinarySocket : public virtual Socket
 
 	/** Write data to the socket
 	 * @param buffer The data to write
-	 * @param l The length of the data
+	 * @param l The length of the data; if 0 then this function returns without doing anything
 	 */
 	virtual void Write(const char *buffer, size_t l);
 	void Write(const char *message, ...);
@@ -373,7 +375,7 @@ class CoreExport ListenSocket : public virtual Socket
 	virtual ~ListenSocket();
 
 	/** Process what has come in from the connection
-	 * @return false to destory this socket
+	 * @return false to destroy this socket
 	 */
 	bool ProcessRead();
 

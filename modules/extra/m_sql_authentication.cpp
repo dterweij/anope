@@ -1,3 +1,11 @@
+/*
+ *
+ * (C) 2012-2016 Anope Team
+ * Contact us at team@anope.org
+ *
+ * Please read COPYING and README for further details.
+ */
+
 #include "module.h"
 #include "modules/sql.h"
 
@@ -42,7 +50,7 @@ class SQLAuthenticationResult : public SQL::Interface
 		if (na == NULL)
 		{
 			na = new NickAlias(req->GetAccount(), new NickCore(req->GetAccount()));
-			FOREACH_MOD(OnNickRegister, (user, na));
+			FOREACH_MOD(OnNickRegister, (user, na, ""));
 			if (user && NickServ)
 				user->SendMessage(NickServ, _("Your account \002%s\002 has been successfully created."), na->nick.c_str());
 		}
@@ -122,7 +130,7 @@ class ModuleSQLAuthentication : public Module
 		if (u)
 		{
 			q.SetValue("n", u->nick);
-			q.SetValue("i", u->ip);
+			q.SetValue("i", u->ip.addr());
 		}
 		else
 		{

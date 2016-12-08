@@ -1,14 +1,12 @@
 /*
  *
  * (C) 2008-2011 Robin Burchell <w00t@inspircd.org>
- * (C) 2003-2014 Anope Team
- * Contact us at team@anope.org
+ * (C) 2003-2016 Anope Team <team@anope.org>
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef USERS_H
@@ -20,6 +18,7 @@
 #include "serialize.h"
 #include "commands.h"
 #include "account.h"
+#include "sockets.h"
 
 typedef Anope::hash_map<User *> user_map;
 
@@ -43,7 +42,7 @@ class CoreExport User : public virtual Base, public Extensible, public CommandRe
 	Anope::string vident;
 	Anope::string ident;
 	Anope::string uid;
-	/* If the user is on the access list of the nick theyre on */
+	/* If the user is on the access list of the nick they're on */
 	bool on_access;
 	/* Map of user modes and the params this user has (if any) */
 	ModeList modes;
@@ -71,7 +70,7 @@ class CoreExport User : public virtual Base, public Extensible, public CommandRe
 	/* SSL Fingerprint */
 	Anope::string fingerprint;
 	/* User's IP */
-	Anope::string ip;
+	sockaddrs ip;
 	/* Server user is connected to */
 	Server *server;
 	/* When the user signed on. Set on connect and never modified. */
@@ -92,6 +91,7 @@ class CoreExport User : public virtual Base, public Extensible, public CommandRe
 	/* Last time this user sent an email */
 	time_t lastmail;
 
+ protected:
 	/** Create a new user object, initialising necessary fields and
 	 * adds it to the hash
 	 *
@@ -101,20 +101,21 @@ class CoreExport User : public virtual Base, public Extensible, public CommandRe
 	 * @param svhost The vhost of the user
 	 * @param sip The ip of the user
 	 * @param sserver The server of the user
-	 * @param srealname The realname/gecos of teh user
-	 * @param ssignon User's timestamp
+	 * @param srealname The realname/gecos of the user
+	 * @param ts User's timestamp
 	 * @param smodes User's modes
 	 * @param suid The unique identifier of the user.
 	 * @param nc The account the user is identified as, if any
 	 */
-	User(const Anope::string &snick, const Anope::string &sident, const Anope::string &shost, const Anope::string &svhost, const Anope::string &sip, Server *sserver, const Anope::string &srealname, time_t ssignon, const Anope::string &smodes, const Anope::string &suid, NickCore *nc);
+	User(const Anope::string &snick, const Anope::string &sident, const Anope::string &shost, const Anope::string &svhost, const Anope::string &sip, Server *sserver, const Anope::string &srealname, time_t ts, const Anope::string &smodes, const Anope::string &suid, NickCore *nc);
 
- protected:
 	/** Destroy a user.
 	 */
 	virtual ~User();
 
  public:
+	static User* OnIntroduce(const Anope::string &snick, const Anope::string &sident, const Anope::string &shost, const Anope::string &svhost, const Anope::string &sip, Server *sserver, const Anope::string &srealname, time_t ts, const Anope::string &smodes, const Anope::string &suid, NickCore *nc);
+
 	/** Update the nickname of a user record accordingly, should be
 	 * called from ircd protocol.
 	 * @param newnick The new username
@@ -323,7 +324,7 @@ class CoreExport User : public virtual Base, public Extensible, public CommandRe
 	/** Check if the user is protected from kicks and negative mode changes
 	 * @return true or false
 	 */
-	bool IsProtected() const;
+	bool IsProtected();
 
 	/** Kill a user
 	 * @param source The user/server doing the kill

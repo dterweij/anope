@@ -1,3 +1,11 @@
+/*
+ *
+ * (C) 2011-2016 Anope Team
+ * Contact us at team@anope.org
+ *
+ * Please read COPYING and README for further details.
+ */
+
 #ifndef OS_SESSION_H
 #define OS_SESSION_H
 
@@ -7,7 +15,7 @@ struct Session
 	unsigned count;                 /* Number of clients with this host */
 	unsigned hits;                  /* Number of subsequent kills for a host */
 
-	Session(const Anope::string &ip, int len) : addr(ip, len), count(1), hits(0) { }
+	Session(const sockaddrs &ip, int len) : addr(ip, len), count(1), hits(0) { }
 };
 
 struct Exception : Serializable
@@ -84,4 +92,3 @@ Serializable* Exception::Unserialize(Serializable *obj, Serialize::Data &data)
 }
 
 #endif
-

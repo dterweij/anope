@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -62,7 +62,7 @@ class CommandNSList : public Command
 			{
 				if (keyword.equals_ci("NOEXPIRE"))
 					nsnoexpire = true;
-				if (keyword.equals_ci("NS_SUSPENDED"))
+				if (keyword.equals_ci("SUSPENDED"))
 					suspended = true;
 				if (keyword.equals_ci("UNCONFIRMED"))
 					unconfirmed = true;

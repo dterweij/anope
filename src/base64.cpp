@@ -1,13 +1,12 @@
 /* base64 routines.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -82,7 +81,7 @@ static const char Pad64 = '=';
 void Anope::B64Encode(const Anope::string &src, Anope::string &target)
 {
 	size_t src_pos = 0, src_len = src.length();
-	unsigned char input[3];
+	unsigned char input[3] = { '\0', '\0', '\0' };
 
 	target.clear();
 
@@ -159,7 +158,7 @@ void Anope::B64Decode(const Anope::string &src, Anope::string &target)
 				state = 0;
 		}
 	}
-	if (!target[target.length() - 1])
+	if (!target.empty() && !target[target.length() - 1])
 		target.erase(target.length() - 1);
 }
 

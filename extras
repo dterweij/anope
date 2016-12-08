@@ -147,13 +147,8 @@ while (1)
 	chop($input); # remove the trailing \n from the user input
 
 	if ($input eq "q") {
-		if (-e "build") {
-			if (-e "cmake-bin") {
-				my $cmake_path = `find cmake-bin -name cmake -print0`;
-				system($cmake_path, "build/.");
-			} else {
-				system("cmake", "build/.");
-			}
+		if (-e "build/CMakeFiles") {
+			system("cmake", "build/.");
 			print "\nNow cd build, then run make to build Anope.\n\n";
 		} else {
 			print "\nBuild directory not found. You should run ./Config now.\n\n"

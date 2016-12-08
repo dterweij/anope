@@ -1,5 +1,5 @@
 /*
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -46,8 +46,6 @@ bool WebCPanel::ChanServ::Access::OnRequest(HTTPProvider *server, const Anope::s
 
 	replacements["ACCESS_LIST"] = "YES";
 
-	const ChanAccess *highest = u_access.Highest();
-	
 	if (u_access.HasPriv("ACCESS_CHANGE") || has_priv)
 	{
 		if (message.get_data["del"].empty() == false && message.get_data["mask"].empty() == false)
@@ -61,75 +59,42 @@ bool WebCPanel::ChanServ::Access::OnRequest(HTTPProvider *server, const Anope::s
 		}
 		else if (message.post_data["mask"].empty() == false && message.post_data["access"].empty() == false && message.post_data["provider"].empty() == false)
 		{
-			// Generic access add code here, works with any provider (so we can't call a command exactly)
-			AccessProvider *a = NULL;
-			for (std::list<AccessProvider *>::const_iterator it = AccessProvider::GetProviders().begin(); it != AccessProvider::GetProviders().end(); ++it)
-				if ((*it)->name == message.post_data["provider"])
-					a = *it;
+			const Anope::string &provider = message.post_data["provider"];
 
-			if (a)
+			if (provider == "chanserv/access")
 			{
-				bool denied = false;
+				std::vector<Anope::string> params;
+				params.push_back(ci->name);
+				params.push_back("ADD");
+				params.push_back(message.post_data["mask"]);
+				params.push_back(message.post_data["access"]);
 
-				for (unsigned i = 0, end = ci->GetAccessCount(); i < end; ++i)
-				{
-					ChanAccess *acc = ci->GetAccess(i);
+				WebPanel::RunCommand(na->nc->display, na->nc, "ChanServ", "chanserv/access", params, replacements);
+			}
+			else if (provider == "chanserv/xop")
+			{
+				std::vector<Anope::string> params;
+				params.push_back(ci->name);
+				params.push_back("ADD");
+				params.push_back(message.post_data["mask"]);
 
-					if (acc->mask == message.post_data["mask"])
-					{
-						if ((!highest || *acc >= *highest) && !u_access.founder && !has_priv)
-						{
-							replacements["MESSAGES"] = "Access denied";
-							denied = true;
-						}
-						else
-							delete acc;
-						break;
-					}
-				}
+				WebPanel::RunCommandWithName(na->nc, "ChanServ", "chanserv/xop", message.post_data["access"], params, replacements);
+			}
+			else if (provider == "chanserv/flags")
+			{
+				std::vector<Anope::string> params;
+				params.push_back(ci->name);
+				params.push_back("MODIFY");
+				params.push_back(message.post_data["mask"]);
+				params.push_back(message.post_data["access"]);
 
-
-				unsigned access_max = Config->GetModule("chanserv")->Get<unsigned>("accessmax", "1024");
-				if (access_max && ci->GetAccessCount() >= access_max)
-					replacements["MESSAGES"] = "Sorry, you can only have " + stringify(access_max) + " access entries on a channel.";
-				else if (!denied)
-				{
-					ChanAccess *new_acc = a->Create();
-					new_acc->ci = ci;
-					new_acc->mask = message.post_data["mask"];
-					new_acc->creator = na->nc->display;
-					try
-					{
-						new_acc->AccessUnserialize(message.post_data["access"]);
-					}
-					catch (...)
-					{
-						replacements["MESSAGES"] = "Invalid access expression for the given type";
-						delete new_acc;
-						new_acc = NULL;
-					}
-					if (new_acc)
-					{
-						new_acc->last_seen = 0;
-						new_acc->created = Anope::CurTime;
-
-						if ((!highest || *highest <= *new_acc) && !u_access.founder && !has_priv)
-							delete new_acc;
-						else if (new_acc->AccessSerialize().empty())
-						{
-							replacements["MESSAGES"] = "Invalid access expression for the given type";
-							delete new_acc;
-						}
-						else
-						{
-							ci->AddAccess(new_acc);
-							replacements["MESSAGES"] = "Access for " + new_acc->mask + " set to " + new_acc->AccessSerialize();
-						}
-					}
-				}
+				WebPanel::RunCommand(na->nc->display, na->nc, "ChanServ", "chanserv/flags", params, replacements);
 			}
 		}
 	}
+
+	/* command might have invalidated u_access */
+	u_access = ci->AccessFor(na->nc);
 
 	replacements["ESCAPED_CHANNEL"] = HTTPUtils::URLEncode(chname);
 	replacements["ACCESS_CHANGE"] = u_access.HasPriv("ACCESS_CHANGE") ? "YES" : "NO";
@@ -138,16 +103,17 @@ bool WebCPanel::ChanServ::Access::OnRequest(HTTPProvider *server, const Anope::s
 	{
 		ChanAccess *access = ci->GetAccess(i);
 
-		replacements["MASKS"] = HTTPUtils::Escape(access->mask);
+		replacements["MASKS"] = HTTPUtils::Escape(access->Mask());
 		replacements["ACCESSES"] = HTTPUtils::Escape(access->AccessSerialize());
 		replacements["CREATORS"] = HTTPUtils::Escape(access->creator);
 	}
 
-	for (std::list<AccessProvider *>::const_iterator it = AccessProvider::GetProviders().begin(); it != AccessProvider::GetProviders().end(); ++it)
-	{
-		const AccessProvider *a = *it;
-		replacements["PROVIDERS"] = a->name;
-	}
+	if (Service::FindService("Command", "chanserv/access"))
+		replacements["PROVIDERS"] = "chanserv/access";
+	if (Service::FindService("Command", "chanserv/xop"))
+		replacements["PROVIDERS"] = "chanserv/xop";
+	if (Service::FindService("Command", "chanserv/flags"))
+		replacements["PROVIDERS"] = "chanserv/flags";
 
 	Page.Serve(server, page_name, client, message, reply, replacements);
 	return true;

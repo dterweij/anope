@@ -1,5 +1,6 @@
 /*
- * (C) 2003-2014 Anope Team
+ *
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -123,7 +124,7 @@ class DBFlatFile : public Module, public Pipe
 			const std::vector<Anope::string> &type_order = Serialize::Type::GetTypeOrder();
 
 			std::set<Anope::string> dbs;
-			dbs.insert(Config->GetModule(this)->Get<const Anope::string>("database"));
+			dbs.insert(Config->GetModule(this)->Get<const Anope::string>("database", "anope.db"));
 
 			for (unsigned i = 0; i < type_order.size(); ++i)
 			{
@@ -146,10 +147,14 @@ class DBFlatFile : public Module, public Pipe
 				Log(LOG_DEBUG) << "db_flatfile: Attempting to rename " << *it << " to " << newname;
 				if (rename(oldname.c_str(), newname.c_str()))
 				{
-					Log(this) << "Unable to back up database " << *it << "!";
+					Anope::string err = Anope::LastError();
+					Log(this) << "Unable to back up database " << *it << " (" << err << ")!";
 
-					if (!Config->GetModule(this)->Get<bool>("nobackupok"))
+					if (!Config->GetModule(this)->Get<bool>("nobackupokay"))
+					{
 						Anope::Quitting = true;
+						Anope::QuitReason = "Unable to back up database " + *it + " (" + err + ")";
+					}
 
 					continue;
 				}
@@ -210,7 +215,7 @@ class DBFlatFile : public Module, public Pipe
 
 		Log(this) << "Error saving databases: " << buf;
 
-		if (!Config->GetModule(this)->Get<bool>("nobackupok"))
+		if (!Config->GetModule(this)->Get<bool>("nobackupokay"))
 			Anope::Quitting = true;
 	}
 
@@ -221,7 +226,7 @@ class DBFlatFile : public Module, public Pipe
 
 		const Anope::string &db_name = Anope::DataDir + "/" + Config->GetModule(this)->Get<const Anope::string>("database", "anope.db");
 
-		std::fstream fd(db_name.c_str(), std::ios_base::in);
+		std::fstream fd(db_name.c_str(), std::ios_base::in | std::ios_base::binary);
 		if (!fd.is_open())
 		{
 			Log(this) << "Unable to open " << db_name << " for reading!";
@@ -310,7 +315,7 @@ class DBFlatFile : public Module, public Pipe
 				if (Anope::IsFile(db_name))
 					rename(db_name.c_str(), (db_name + ".tmp").c_str());
 
-				std::fstream *fs = databases[s_type->GetOwner()] = new std::fstream(db_name.c_str(), std::ios_base::out | std::ios_base::trunc);
+				std::fstream *fs = databases[s_type->GetOwner()] = new std::fstream(db_name.c_str(), std::ios_base::out | std::ios_base::trunc | std::ios_base::binary);
 
 				if (!fs->is_open())
 					Log(this) << "Unable to open " << db_name << " for writing";
@@ -337,7 +342,7 @@ class DBFlatFile : public Module, public Pipe
 			for (std::map<Module *, std::fstream *>::iterator it = databases.begin(), it_end = databases.end(); it != it_end; ++it)
 			{
 				std::fstream *f = it->second;
-				const Anope::string &db_name = Anope::DataDir + "/" + (it->first ? (it->first->name + ".db") : Config->GetModule(this)->Get<const Anope::string>("database"));
+				const Anope::string &db_name = Anope::DataDir + "/" + (it->first ? (it->first->name + ".db") : Config->GetModule(this)->Get<const Anope::string>("database", "anope.db"));
 
 				if (!f->is_open() || !f->good())
 				{
@@ -382,7 +387,7 @@ class DBFlatFile : public Module, public Pipe
 		else
 			db_name = Anope::DataDir + "/" + Config->GetModule(this)->Get<const Anope::string>("database", "anope.db");
 
-		std::fstream fd(db_name.c_str(), std::ios_base::in);
+		std::fstream fd(db_name.c_str(), std::ios_base::in | std::ios_base::binary);
 		if (!fd.is_open())
 		{
 			Log(this) << "Unable to open " << db_name << " for reading!";

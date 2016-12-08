@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -11,6 +11,13 @@
 
 #include "module.h"
 #include "modules/cs_mode.h"
+
+inline static Anope::string BotModes()
+{
+	return Config->GetModule("botserv")->Get<Anope::string>("botmodes",
+		Config->GetModule("chanserv")->Get<Anope::string>("botmodes", "o")
+	);
+}
 
 class ChanServCore : public Module, public ChanServService
 {
@@ -66,11 +73,11 @@ class ChanServCore : public Module, public ChanServService
 				if (!c)
 					return;
 
-				inhabit.Unset(c);
-
 				/* In the event we don't part */
 				c->RemoveMode(NULL, "SECRET");
 				c->RemoveMode(NULL, "INVITE");
+
+				inhabit.Unset(c); /* now we're done changing modes, unset inhabit */
 
 				if (!c->ci || !c->ci->bi)
 				{
@@ -154,7 +161,7 @@ class ChanServCore : public Module, public ChanServService
 					for (unsigned j = 0; j < ci->GetAccessCount(); ++j)
 					{
 						const ChanAccess *ca = ci->GetAccess(j);
-						const NickCore *anc = NickCore::Find(ca->mask);
+						NickCore *anc = ca->GetAccount();
 
 						if (!anc || (!anc->IsServicesOper() && max_reg && anc->channelcount >= max_reg) || (anc == nc))
 							continue;
@@ -162,7 +169,7 @@ class ChanServCore : public Module, public ChanServService
 							highest = ca;
 					}
 					if (highest)
-						newowner = NickCore::Find(highest->mask);
+						newowner = highest->GetAccount();
 				}
 
 				if (newowner)
@@ -186,9 +193,8 @@ class ChanServCore : public Module, public ChanServService
 			for (unsigned j = 0; j < ci->GetAccessCount(); ++j)
 			{
 				const ChanAccess *ca = ci->GetAccess(j);
-				const NickCore *anc = NickCore::Find(ca->mask);
 
-				if (anc && anc == nc)
+				if (ca->GetAccount() == nc)
 				{
 					delete ci->EraseAccess(j);
 					break;
@@ -224,7 +230,7 @@ class ChanServCore : public Module, public ChanServService
 			{
 				ChanAccess *a = c->GetAccess(j);
 
-				if (a->mask.equals_ci(ci->name))
+				if (a->Mask().equals_ci(ci->name))
 				{
 					delete a;
 					break;
@@ -274,8 +280,11 @@ class ChanServCore : public Module, public ChanServService
 				"lists and settings for any channel."));
 	}
 
-	void OnCheckModes(Channel *c) anope_override
+	void OnCheckModes(Reference<Channel> &c) anope_override
 	{
+		if (!c)
+			return;
+
 		if (c->ci)
 			c->SetMode(c->ci->WhoSends(), "REGISTERED", "", false);
 		else
@@ -365,10 +374,6 @@ class ChanServCore : public Module, public ChanServService
 		if (inhabit.HasExt(c))
 			return EVENT_STOP;
 
-		/* Channel is persistent, it shouldn't be deleted and the service bot should stay */
-		if (c->ci && persist && persist->Get(c->ci))
-			return EVENT_STOP;
-
 		return EVENT_CONTINUE;
 	}
 
@@ -380,7 +385,7 @@ class ChanServCore : public Module, public ChanServService
 		for (registered_channel_map::iterator it = RegisteredChannelList->begin(), it_end = RegisteredChannelList->end(); it != it_end; ++it)
 		{
 			ChannelInfo *ci = it->second;
-			if (persist->Get(ci))
+			if (persist->HasExt(ci))
 			{
 				bool c;
 				ci->c = Channel::FindOrCreate(ci->name, c, ci->time_registered);
@@ -397,7 +402,7 @@ class ChanServCore : public Module, public ChanServService
 						ci->WhoSends()->Assign(NULL, ci);
 					if (ci->c->FindUser(ci->bi) == NULL)
 					{
-						ChannelStatus status(Config->GetModule("botserv")->Get<const Anope::string>("botmodes"));
+						ChannelStatus status(BotModes());
 						ci->bi->Join(ci->c, &status);
 					}
 				}
@@ -414,7 +419,7 @@ class ChanServCore : public Module, public ChanServService
 		if (ci->c->HasMode("PERM"))
 			persist->Set(ci);
 		/* Persist may be in def cflags, set it here */
-		else if (persist->Get(ci))
+		else if (persist->HasExt(ci))
 			ci->c->SetMode(NULL, "PERM");
 	}
 
@@ -456,6 +461,17 @@ class ChanServCore : public Module, public ChanServService
 		time_t chanserv_expire = Config->GetModule(this)->Get<time_t>("expire", "14d");
 		if (!ci->HasExt("CS_NO_EXPIRE") && chanserv_expire && !Anope::NoExpire && ci->last_used != Anope::CurTime)
 			info[_("Expires")] = Anope::strftime(ci->last_used + chanserv_expire, source.GetAccount());
+	}
+
+	void OnSetCorrectModes(User *user, Channel *chan, AccessGroup &access, bool &give_modes, bool &take_modes) anope_override
+	{
+		if (always_lower)
+			// Since we always lower the TS, the other side will remove the modes if the channel ts lowers, so we don't
+			// have to worry about it
+			take_modes = false;
+		else if (ModeManager::FindChannelModeByName("REGISTERED"))
+			// Otherwise if the registered channel mode exists, we should remove modes if the channel is not +r
+			take_modes = !chan->HasMode("REGISTERED");
 	}
 };
 

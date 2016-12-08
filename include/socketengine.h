@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef SOCKETENGINE_H
@@ -41,6 +40,11 @@ class CoreExport SocketEngine
 	/** Read from sockets and do things
 	 */
 	static void Process();
+
+	static int GetLastError();
+	static void SetLastError(int);
+
+	static bool IgnoreErrno();
 };
 
 #endif // SOCKETENGINE_H

@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -33,7 +33,8 @@ class CommandNSSet : public Command
 		source.Reply(_("Sets various nickname options. \037option\037 can be one of:"));
 
 		Anope::string this_name = source.command;
-		bool hide_privileged_commands = Config->GetBlock("options")->Get<bool>("hideprivilegedcommands");
+		bool hide_privileged_commands = Config->GetBlock("options")->Get<bool>("hideprivilegedcommands"),
+		     hide_registered_commands = Config->GetBlock("options")->Get<bool>("hideregisteredcommands");
 		for (CommandInfo::map::const_iterator it = source.service->commands.begin(), it_end = source.service->commands.end(); it != it_end; ++it)
 		{
 			const Anope::string &c_name = it->first;
@@ -42,13 +43,12 @@ class CommandNSSet : public Command
 			if (c_name.find_ci(this_name + " ") == 0)
 			{
 				ServiceReference<Command> c("Command", info.name);
+				// XXX dup
 				if (!c)
 					continue;
-				else if (!hide_privileged_commands)
-					; // Always show with hide_privileged_commands disabled
-				else if (!c->AllowUnregistered() && !source.GetAccount())
+				else if (hide_registered_commands && !c->AllowUnregistered() && !source.GetAccount())
 					continue;
-				else if (!info.permission.empty() && !source.HasCommand(info.permission))
+				else if (hide_privileged_commands && !info.permission.empty() && !source.HasCommand(info.permission))
 					continue;
 
 				source.command = c_name;
@@ -119,7 +119,7 @@ class CommandNSSetPassword : public Command
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		const Anope::string &param = params[1];
+		const Anope::string &param = params[0];
 		unsigned len = param.length();
 
 		if (Anope::ReadOnly)
@@ -133,9 +133,11 @@ class CommandNSSetPassword : public Command
 			source.Reply(MORE_OBSCURE_PASSWORD);
 			return;
 		}
-		else if (len > Config->GetModule("nickserv")->Get<unsigned>("passlen", "32"))
+
+		unsigned int passlen = Config->GetModule("nickserv")->Get<unsigned>("passlen", "32");
+		if (len > passlen)
 		{
-			source.Reply(PASSWORD_TOO_LONG);
+			source.Reply(PASSWORD_TOO_LONG, passlen);
 			return;
 		}
 
@@ -191,14 +193,17 @@ class CommandNSSASetPassword : public Command
 			source.Reply(_("You may not change the password of other Services Operators."));
 			return;
 		}
-		else if (nc->display.equals_ci(params[1]) || (Config->GetBlock("options")->Get<bool>("strictpasswords") && len < 5))
+
+		if (nc->display.equals_ci(params[1]) || (Config->GetBlock("options")->Get<bool>("strictpasswords") && len < 5))
 		{
 			source.Reply(MORE_OBSCURE_PASSWORD);
 			return;
 		}
-		else if (len > Config->GetModule("nickserv")->Get<unsigned>("passlen", "32"))
+
+		unsigned int passlen = Config->GetModule("nickserv")->Get<unsigned>("passlen", "32");
+		if (len > passlen)
 		{
-			source.Reply(PASSWORD_TOO_LONG);
+			source.Reply(PASSWORD_TOO_LONG, passlen);
 			return;
 		}
 
@@ -330,7 +335,7 @@ class CommandNSSetDisplay : public Command
 			return;
 		}
 
-		const NickAlias *user_na = NickAlias::Find(user), *na = NickAlias::Find(param);
+		NickAlias *user_na = NickAlias::Find(user), *na = NickAlias::Find(param);
 
 		if (Config->GetModule("nickserv")->Get<bool>("nonicknameownership"))
 		{
@@ -356,6 +361,14 @@ class CommandNSSetDisplay : public Command
 		Log(user_na->nc == source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to change the display of " << user_na->nc->display << " to " << na->nick;
 
 		user_na->nc->SetDisplay(na);
+
+		/* Send updated account name */
+		for (std::list<User *>::iterator it = user_na->nc->users.begin(); it != user_na->nc->users.end(); ++it)
+		{
+			User *u = *it;
+			IRCD->SendLogin(u, user_na);
+		}
+
 		source.Reply(NICK_SET_DISPLAY_CHANGED, user_na->nc->display.c_str());
 	}
 
@@ -400,29 +413,31 @@ class CommandNSSASetDisplay : public CommandNSSetDisplay
 
 class CommandNSSetEmail : public Command
 {
-	static bool SendConfirmMail(User *u, BotInfo *bi, const Anope::string &new_email)
+	static bool SendConfirmMail(User *u, NickCore *nc, BotInfo *bi, const Anope::string &new_email)
 	{
 		Anope::string code = Anope::Random(9);
 	
-		std::pair<Anope::string, Anope::string> *n = u->Account()->Extend<std::pair<Anope::string, Anope::string> >("ns_set_email");
+		std::pair<Anope::string, Anope::string> *n = nc->Extend<std::pair<Anope::string, Anope::string> >("ns_set_email");
 		n->first = new_email;
 		n->second = code;
 
 		Anope::string subject = Config->GetBlock("mail")->Get<const Anope::string>("emailchange_subject"),
 			message = Config->GetBlock("mail")->Get<const Anope::string>("emailchange_message");
 
-		subject = subject.replace_all_cs("%e", u->Account()->email);
+		subject = subject.replace_all_cs("%e", nc->email);
+		subject = subject.replace_all_cs("%E", new_email);
 		subject = subject.replace_all_cs("%N", Config->GetBlock("networkinfo")->Get<const Anope::string>("networkname"));
 		subject = subject.replace_all_cs("%c", code);
 
-		message = message.replace_all_cs("%e", u->Account()->email);
+		message = message.replace_all_cs("%e", nc->email);
+		message = message.replace_all_cs("%E", new_email);
 		message = message.replace_all_cs("%N", Config->GetBlock("networkinfo")->Get<const Anope::string>("networkname"));
 		message = message.replace_all_cs("%c", code);
 
-		Anope::string old = u->Account()->email;
-		u->Account()->email = new_email;
-		bool b = Mail::Send(u, u->Account(), bi, subject, message);
-		u->Account()->email = old;
+		Anope::string old = nc->email;
+		nc->email = new_email;
+		bool b = Mail::Send(u, nc, bi, subject, message);
+		nc->email = old;
 		return b;
 	}
 
@@ -449,6 +464,12 @@ class CommandNSSetEmail : public Command
 		}
 		NickCore *nc = na->nc;
 
+		if (nc->HasExt("UNCONFIRMED"))
+		{
+			source.Reply(_("You may not change the email of an unconfirmed account."));
+			return;
+		}
+
 		if (param.empty() && Config->GetModule("nickserv")->Get<bool>("forceemail", "yes"))
 		{
 			source.Reply(_("You cannot unset the e-mail on this network."));
@@ -472,7 +493,7 @@ class CommandNSSetEmail : public Command
 
 		if (!param.empty() && Config->GetModule("nickserv")->Get<bool>("confirmemailchanges") && !source.IsServicesOper())
 		{
-			if (SendConfirmMail(source.GetUser(), source.service, param))
+			if (SendConfirmMail(source.GetUser(), source.GetAccount(), source.service, param))
 				source.Reply(_("A confirmation e-mail has been sent to \002%s\002. Follow the instructions in it to change your e-mail address."), param.c_str());
 		}
 		else
@@ -786,7 +807,7 @@ class CommandNSSetLanguage : public Command
 		if (MOD_RESULT == EVENT_STOP)
 			return;
 
-		if (param != "en")
+		if (param != "en_US")
 			for (unsigned j = 0; j < Language::Languages.size(); ++j)
 			{
 				if (Language::Languages[j] == param)
@@ -801,7 +822,10 @@ class CommandNSSetLanguage : public Command
 		Log(nc == source.GetAccount() ? LOG_COMMAND : LOG_ADMIN, source, this) << "to change the language of " << nc->display << " to " << param;
 
 		nc->language = param;
-		source.Reply(_("Language changed to \002English\002."));
+		if (source.GetAccount() == nc)
+			source.Reply(_("Language changed to \002English\002."));
+		else
+			source.Reply(_("Language for \002%s\002 changed to \002%s\002."), nc->display.c_str(), Language::Translate(param.c_str(), _("English")));
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &param) anope_override
@@ -818,7 +842,7 @@ class CommandNSSetLanguage : public Command
 				"\037language\037 should be chosen from the following list of\n"
 				"supported languages:"));
 
-		source.Reply("         en (English)");
+		source.Reply("         en_US (English)");
 		for (unsigned j = 0; j < Language::Languages.size(); ++j)
 		{
 			const Anope::string &langname = Language::Translate(Language::Languages[j].c_str(), _("English"));
@@ -1092,13 +1116,13 @@ class CommandNSSASetNoexpire : public Command
 
 		if (param.equals_ci("ON"))
 		{
-			Log(LOG_ADMIN, source, this) << "to enable noexpire for " << na->nc->display;
+			Log(LOG_ADMIN, source, this) << "to enable noexpire for " << na->nick << " (" << na->nc->display << ")";
 			na->Extend<bool>("NS_NO_EXPIRE");
 			source.Reply(_("Nick %s \002will not\002 expire."), na->nick.c_str());
 		}
 		else if (param.equals_ci("OFF"))
 		{
-			Log(LOG_ADMIN, source, this) << "to disable noexpire for " << na->nc->display;
+			Log(LOG_ADMIN, source, this) << "to disable noexpire for " << na->nick << " (" << na->nc->display << ")";
 			na->Shrink<bool>("NS_NO_EXPIRE");
 			source.Reply(_("Nick %s \002will\002 expire."), na->nick.c_str());
 		}
@@ -1187,6 +1211,7 @@ class NSSet : public Module
 			NickCore *nc = anope_dynamic_static_cast<NickCore *>(s);
 			Anope::string modes;
 			data["last_modes"] >> modes;
+			nc->last_modes.clear();
 			for (spacesepstream sep(modes); sep.GetToken(modes);)
 			{
 				size_t c = modes.find(',');

@@ -1,13 +1,12 @@
 /* Modular support
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "serialize.h"
@@ -20,6 +19,7 @@
 #include "timers.h"
 #include "logger.h"
 #include "extensible.h"
+#include "version.h"
 
 /** This definition is used as shorthand for the various classes
  * and functions needed to make a module loadable by the OS.
@@ -40,6 +40,14 @@
 	extern "C" void AnopeFini(x *m) \
 	{ \
 		delete m; \
+	} \
+	extern "C" DllExport ModuleVersionC AnopeVersion() \
+	{ \
+		ModuleVersionC ver; \
+		ver.version_major = VERSION_MAJOR; \
+		ver.version_minor = VERSION_MINOR; \
+		ver.version_patch = VERSION_PATCH; \
+		return ver; \
 	}
 #else
 # define MODULE_INIT(x) \
@@ -50,6 +58,14 @@
 	extern "C" DllExport void AnopeFini(x *m) \
 	{ \
 		delete m; \
+	} \
+	extern "C" DllExport ModuleVersionC AnopeVersion() \
+	{ \
+		ModuleVersionC ver; \
+		ver.version_major = VERSION_MAJOR; \
+		ver.version_minor = VERSION_MINOR; \
+		ver.version_patch = VERSION_PATCH; \
+		return ver; \
 	}
 #endif
 
@@ -173,6 +189,11 @@ enum
 };
 typedef unsigned short ModType;
 
+struct ModuleVersionC
+{
+	int version_major, version_minor, version_patch;
+};
+
 /** Returned by Module::GetVersion, used to see what version of Anope
  * a module is compiled against.
  */
@@ -184,12 +205,7 @@ class ModuleVersion
 	int version_patch;
 
  public:
-	/** Constructor
-	 * @param major The major version number
-	 * @param minor The minor version number
-	 * @param patch The patch version number
-	 */
-	ModuleVersion(int major, int minor, int patch);
+	ModuleVersion(const ModuleVersionC &);
 
 	/** Get the major version of Anope this was built against
 	 * @return The major version
@@ -279,11 +295,7 @@ class CoreExport Module : public Extensible
 	 */
 	void SetAuthor(const Anope::string &author);
 
-	/** Get the version of Anope this module was
-	 * compiled against
-	 * @return The version
-	 */
-	ModuleVersion GetVersion() const;
+	virtual void Prioritize();
 
 	/* Everything below here are events. Modules must ModuleManager::Attach to these events
 	 * before they will be called.
@@ -472,11 +484,12 @@ class CoreExport Module : public Extensible
 	virtual void OnJoinChannel(User *u, Channel *c) { throw NotImplementedException(); }
 
 	/** Called when a new topic is set
+	 * @param source The user changing the topic, if any
 	 * @param c The channel
-	 * @param setter The user who set the new topic
+	 * @param setter The user who set the new topic, if there is no source
 	 * @param topic The new topic
 	 */
-	virtual void OnTopicUpdated(Channel *c, const Anope::string &user, const Anope::string &topic) { throw NotImplementedException(); }
+	virtual void OnTopicUpdated(User *source, Channel *c, const Anope::string &user, const Anope::string &topic) { throw NotImplementedException(); }
 
 	/** Called before a channel expires
 	 * @param ci The channel
@@ -719,11 +732,6 @@ class CoreExport Module : public Extensible
 	 */
 	virtual void OnNickDrop(CommandSource &source, NickAlias *na) { throw NotImplementedException(); }
 
-	/** Called when a nick is forbidden
-	 * @param na The nick alias of the forbidden nick
-	 */
-	virtual void OnNickForbidden(NickAlias *na) { throw NotImplementedException(); }
-
 	/** Called when a user groups their nick
 	 * @param u The user grouping
 	 * @param target The target they're grouping to
@@ -748,8 +756,15 @@ class CoreExport Module : public Extensible
 	/** Called when a nick is registered
 	 * @param user The user registering the nick, of any
 	 * @param The nick
+	 * @param pass The password of the newly registered nick
 	 */
-	virtual void OnNickRegister(User *user, NickAlias *na) { throw NotImplementedException(); }
+	virtual void OnNickRegister(User *user, NickAlias *na, const Anope::string &pass) { throw NotImplementedException(); }
+
+	/** Called when a nick is confirmed. This will never be called if registration confirmation is not enabled.
+	 * @param user The user confirming the nick
+	 * @param The account being confirmed
+	 */
+	virtual void OnNickConfirm(User *user, NickCore *) { throw NotImplementedException(); }
 
 	/** Called when a nick is suspended
 	 * @param na The nick alias
@@ -1000,7 +1015,7 @@ class CoreExport Module : public Extensible
 	 */
 	virtual void OnLogMessage(LogInfo *li, const Log *l, const Anope::string &msg) { throw NotImplementedException(); }
 
-	/** Called when a DNS request (question) is recieved.
+	/** Called when a DNS request (question) is received.
 	 * @param req The dns request
 	 * @param reply The reply that will be sent
 	 */
@@ -1010,7 +1025,7 @@ class CoreExport Module : public Extensible
 	 * mostly to ensure mlock/+r are set.
 	 * @param c The channel
 	 */
-	virtual void OnCheckModes(Channel *c) { throw NotImplementedException(); }
+	virtual void OnCheckModes(Reference<Channel> &c) { throw NotImplementedException(); }
 
 	/** Called when a channel is synced.
 	 * Channels are synced after a sjoin is finished processing
@@ -1094,8 +1109,8 @@ enum Implementation
 	I_OnPreUserLogoff, I_OnPostUserLogoff, I_OnBotCreate, I_OnBotChange, I_OnBotDelete, I_OnAccessDel, I_OnAccessAdd,
 	I_OnAccessClear, I_OnLevelChange, I_OnChanDrop, I_OnChanRegistered, I_OnChanSuspend, I_OnChanUnsuspend,
 	I_OnCreateChan, I_OnDelChan, I_OnChannelCreate, I_OnChannelDelete, I_OnAkickAdd, I_OnAkickDel, I_OnCheckKick,
-	I_OnChanInfo, I_OnCheckPriv, I_OnGroupCheckPriv, I_OnNickDrop, I_OnNickForbidden, I_OnNickGroup, I_OnNickIdentify,
-	I_OnUserLogin, I_OnNickLogout, I_OnNickRegister, I_OnNickSuspend, I_OnNickUnsuspended, I_OnDelNick, I_OnNickCoreCreate,
+	I_OnChanInfo, I_OnCheckPriv, I_OnGroupCheckPriv, I_OnNickDrop, I_OnNickGroup, I_OnNickIdentify,
+	I_OnUserLogin, I_OnNickLogout, I_OnNickRegister, I_OnNickConfirm, I_OnNickSuspend, I_OnNickUnsuspended, I_OnDelNick, I_OnNickCoreCreate,
 	I_OnDelCore, I_OnChangeCoreDisplay, I_OnNickClearAccess, I_OnNickAddAccess, I_OnNickEraseAccess, I_OnNickClearCert,
 	I_OnNickAddCert, I_OnNickEraseCert, I_OnNickInfo, I_OnBotInfo, I_OnCheckAuthentication, I_OnNickUpdate,
 	I_OnFingerprint, I_OnUserAway, I_OnInvite, I_OnDeleteVhost, I_OnSetVhost, I_OnSetDisplayedHost, I_OnMemoSend, I_OnMemoDel,
@@ -1201,6 +1216,11 @@ class CoreExport ModuleManager
 	 * @return MOD_ERR_OK on success, anything else on fail
 	 */
 	static ModuleReturn DeleteModule(Module *m);
+
+	/** Get the version of Anope the module was compiled against
+	 * @return The version
+	 */
+	static ModuleVersion GetVersion(void *handle);
 };
 
 #endif // MODULES_H

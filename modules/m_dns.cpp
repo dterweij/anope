@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "module.h"
@@ -22,10 +21,15 @@ namespace
 	time_t timeout;
 }
 
-/** A full packet sent or recieved to/from the nameserver
+/** A full packet sent or received to/from the nameserver
  */
 class Packet : public Query
 {
+	static bool IsValidName(const Anope::string &name)
+	{
+		return name.find_first_not_of("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-") == Anope::string::npos;
+	}
+
 	void PackName(unsigned char *output, unsigned short output_size, unsigned short &pos, const Anope::string &name)
 	{
 		if (pos + name.length() + 2 > output_size)
@@ -99,8 +103,7 @@ class Packet : public Query
 		/* +1 pos either to one byte after the compression pointer or one byte after the ending \0 */
 		++pos;
 
-		if (name.empty())
-			throw SocketException("Unable to unpack name - no name");
+		/* Empty names are valid (root domain) */
 
 		Log(LOG_DEBUG_2) << "Resolver: UnpackName successfully unpacked " << name;
 
@@ -115,6 +118,9 @@ class Packet : public Query
 
 		if (pos + 4 > input_size)
 			throw SocketException("Unable to unpack question");
+
+		if (!IsValidName(question.name))
+			throw SocketException("Invalid question name");
 
 		question.type = static_cast<QueryType>(input[pos] << 8 | input[pos + 1]);
 		pos += 2;
@@ -179,6 +185,10 @@ class Packet : public Query
 			case QUERY_PTR:
 			{
 				record.rdata = this->UnpackName(input, input_size, pos);
+
+				if (!IsValidName(record.rdata))
+					throw SocketException("Invalid cname/ptr record data");
+
 				break;
 			}
 			default:
@@ -242,11 +252,18 @@ class Packet : public Query
 		for (unsigned i = 0; i < ancount; ++i)
 			this->answers.push_back(this->UnpackResourceRecord(input, len, packet_pos));
 
-		for (unsigned i = 0; i < nscount; ++i)
-			this->authorities.push_back(this->UnpackResourceRecord(input, len, packet_pos));
+		try
+		{
+			for (unsigned i = 0; i < nscount; ++i)
+				this->authorities.push_back(this->UnpackResourceRecord(input, len, packet_pos));
 
-		for (unsigned i = 0; i < arcount; ++i)
-			this->additional.push_back(this->UnpackResourceRecord(input, len, packet_pos));
+			for (unsigned i = 0; i < arcount; ++i)
+				this->additional.push_back(this->UnpackResourceRecord(input, len, packet_pos));
+		}
+		catch (const SocketException &ex)
+		{
+			Log(LOG_DEBUG_2) << "Unable to parse ns/ar records: " << ex.GetReason();
+		}
 	}
 
 	unsigned short Pack(unsigned char *output, unsigned short output_size)
@@ -792,7 +809,7 @@ class MyManager : public Manager, public Timer
 			}
 
 			Packet *packet = new Packet(recv_packet);
-			packet->flags |= QUERYFLAGS_QR; /* This is a reponse */
+			packet->flags |= QUERYFLAGS_QR; /* This is a response */
 			packet->flags |= QUERYFLAGS_AA; /* And we are authoritative */
 
 			packet->answers.clear();
@@ -836,6 +853,9 @@ class MyManager : public Manager, public Timer
 					break;
 				}
 			}
+
+			if (packet->answers.empty() && packet->authorities.empty() && packet->additional.empty() && packet->error == ERROR_NONE)
+				packet->error = ERROR_REFUSED; // usually safe, won't cause an NXDOMAIN to get cached
 
 			s->Reply(packet);
 			return true;

@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -29,8 +28,10 @@ bool BufferedSocket::ProcessRead()
 	this->recv_len = 0;
 
 	int len = this->io->Recv(this, tbuffer, sizeof(tbuffer) - 1);
-	if (len <= 0)
+	if (len == 0)
 		return false;
+	if (len < 0)
+		return SocketEngine::IgnoreErrno();
 	
 	tbuffer[len] = 0;
 	this->read_buffer.append(tbuffer);
@@ -42,8 +43,11 @@ bool BufferedSocket::ProcessRead()
 bool BufferedSocket::ProcessWrite()
 {
 	int count = this->io->Send(this, this->write_buffer);
-	if (count <= -1)
+	if (count == 0)
 		return false;
+	if (count < 0)
+		return SocketEngine::IgnoreErrno();
+
 	this->write_buffer = this->write_buffer.substr(count);
 	if (this->write_buffer.empty())
 		SocketEngine::Change(this, false, SF_WRITABLE);
@@ -58,8 +62,8 @@ const Anope::string BufferedSocket::GetLine()
 		return "";
 	Anope::string str = this->read_buffer.substr(0, s + 1);
 	this->read_buffer.erase(0, s + 1);
-	this->read_buffer.ltrim();
-	return str.trim();
+	this->read_buffer.ltrim("\r\n");
+	return str.trim("\r\n");
 }
 
 void BufferedSocket::Write(const char *buffer, size_t l)
@@ -162,6 +166,8 @@ bool BinarySocket::ProcessWrite()
 
 void BinarySocket::Write(const char *buffer, size_t l)
 {
+	if (l == 0)
+		return;
 	this->write_buffer.push_back(new DataBlock(buffer, l));
 	SocketEngine::Change(this, true, SF_WRITABLE);
 }

@@ -1,7 +1,6 @@
-/* hs_request.c - Add request and activate functionality to HostServ,
+/* hs_request.c - Add request and activate functionality to HostServ
  *
- *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Based on the original module by Rob <rob@anope.org>
@@ -96,6 +95,12 @@ class CommandHSRequest : public Command
 			return;
 		}
 
+		if (source.GetAccount()->HasExt("UNCONFIRMED"))
+		{
+			source.Reply(_("You must confirm your account before you may request a vhost."));
+			return;
+		}
+
 		Anope::string rawhostmask = params[0];
 		
 		Anope::string user, host;
@@ -171,7 +176,7 @@ class CommandHSRequest : public Command
 	{
 		this->SendSyntax(source);
 		source.Reply(" ");
-		source.Reply(_("Request the given vHost to be actived for your nick by the\n"
+		source.Reply(_("Request the given vHost to be activated for your nick by the\n"
 			"network administrators. Please be patient while your request\n"
 			"is being considered."));
 		return true;
@@ -356,7 +361,6 @@ class HSRequest : public Module
 		commandhsrequest(this), commandhsactive(this),
 		commandhsreject(this), commandhswaiting(this), hostrequest(this, "hostrequest"), request_type("HostRequest", HostRequest::Unserialize)
 	{
-
 		if (!IRCD || !IRCD->CanSetVHost)
 			throw ModuleException("Your IRCd does not support vhosts");
 	}

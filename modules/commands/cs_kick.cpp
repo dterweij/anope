@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -47,6 +47,9 @@ class CommandCSKick : public Command
 		if (reason.length() > reasonmax)
 			reason = reason.substr(0, reasonmax);
 
+		Anope::string signkickformat = Config->GetModule("chanserv")->Get<Anope::string>("signkickformat", "%m (%n)");
+		signkickformat = signkickformat.replace_all_cs("%n", source.GetNick());
+
 		AccessGroup u_access = source.AccessFor(ci);
 
 		if (!u_access.HasPriv("KICK") && !source.HasPriv("chanserv/kick"))
@@ -66,14 +69,19 @@ class CommandCSKick : public Command
 				Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "for " << u2->nick;
 
 				if (ci->HasExt("SIGNKICK") || (ci->HasExt("SIGNKICK_LEVEL") && !u_access.HasPriv("SIGNKICK")))
-					c->Kick(ci->WhoSends(), u2, "%s (%s)", reason.c_str(), source.GetNick().c_str());
+				{
+					signkickformat = signkickformat.replace_all_cs("%m", reason);
+					c->Kick(ci->WhoSends(), u2, "%s", signkickformat.c_str());
+				}
 				else
 					c->Kick(ci->WhoSends(), u2, "%s", reason.c_str());
 			}
 		}
 		else if (u_access.HasPriv("FOUNDER"))
 		{
-			Log(LOG_COMMAND, source, this, ci) << "for " << target;
+			Anope::string mask = IRCD->NormalizeMask(target);
+
+			Log(LOG_COMMAND, source, this, ci) << "for " << mask;
 
 			int matched = 0, kicked = 0;
 			for (Channel::ChanUserList::iterator it = c->users.begin(), it_end = c->users.end(); it != it_end;)
@@ -81,7 +89,8 @@ class CommandCSKick : public Command
 				ChanUserContainer *uc = it->second;
 				++it;
 
-				if (Anope::Match(uc->user->nick, target) || Anope::Match(uc->user->GetDisplayedMask(), target))
+				Entry e("",  mask);
+				if (e.Matches(uc->user))
 				{
 					++matched;
 
@@ -93,16 +102,20 @@ class CommandCSKick : public Command
 
 					++kicked;
 					if (ci->HasExt("SIGNKICK") || (ci->HasExt("SIGNKICK_LEVEL") && !u_access.HasPriv("SIGNKICK")))
-						c->Kick(ci->WhoSends(), uc->user, "%s (Matches %s) (%s)", reason.c_str(), target.c_str(), source.GetNick().c_str());
+					{
+						reason += " (Matches " + mask + ")";
+						signkickformat = signkickformat.replace_all_cs("%m", reason);
+						c->Kick(ci->WhoSends(), uc->user, "%s", signkickformat.c_str());
+					}
 					else
-						c->Kick(ci->WhoSends(), uc->user, "%s (Matches %s)", reason.c_str(), target.c_str());
+						c->Kick(ci->WhoSends(), uc->user, "%s (Matches %s)", reason.c_str(), mask.c_str());
 				}
 			}
 
 			if (matched)
-				source.Reply(_("Kicked %d/%d users matching %s from %s."), kicked, matched, target.c_str(), c->name.c_str());
+				source.Reply(_("Kicked %d/%d users matching %s from %s."), kicked, matched, mask.c_str(), c->name.c_str());
 			else
-				source.Reply(_("No users on %s match %s."), c->name.c_str(), target.c_str());
+				source.Reply(_("No users on %s match %s."), c->name.c_str(), mask.c_str());
 		}
 		else
 			source.Reply(NICK_X_NOT_IN_USE, target.c_str());
@@ -115,7 +128,7 @@ class CommandCSKick : public Command
 		source.Reply(_("Kicks a specified nick from a channel.\n"
 				" \n"
 				"By default, limited to AOPs or those with level 5 access\n"
-				"and above on the channel. Channel founders may use masks too."));
+				"and above on the channel. Channel founders can also specify masks."));
 		return true;
 	}
 };

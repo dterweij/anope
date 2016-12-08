@@ -1,6 +1,6 @@
 /* Core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -153,7 +153,7 @@ class CommandHelp : public Command
 				// Allow unregistered users to see help for commands that they explicitly request help for
 
 				const Anope::string &subcommand = params.size() > max ? params[max] : "";
-				source.command = full_command;
+				source.command = it->first;
 				if (!c->OnHelp(source, subcommand))
 					continue;
 

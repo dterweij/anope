@@ -1,10 +1,9 @@
 /*
  *
- * Copyright (C) 2008-2011 Robin Burchell <w00t@inspircd.org>
- * Copyright (C) 2008-2014 Anope Team <team@anope.org>
+ * (C) 2008-2011 Robin Burchell <w00t@inspircd.org>
+ * (C) 2008-2016 Anope Team <team@anope.org>
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #include "services.h"
@@ -21,7 +20,7 @@
 
 Serialize::Checker<botinfo_map> BotListByNick("BotInfo"), BotListByUID("BotInfo");
 
-BotInfo::BotInfo(const Anope::string &nnick, const Anope::string &nuser, const Anope::string &nhost, const Anope::string &nreal, const Anope::string &bmodes) : User(nnick, nuser, nhost, "", "", Me, nreal, Anope::CurTime, "", Servers::TS6_UID_Retrieve(), NULL), Serializable("BotInfo"), channels("ChannelInfo"), botmodes(bmodes)
+BotInfo::BotInfo(const Anope::string &nnick, const Anope::string &nuser, const Anope::string &nhost, const Anope::string &nreal, const Anope::string &bmodes) : User(nnick, nuser, nhost, "", "", Me, nreal, Anope::CurTime, "", IRCD ? IRCD->UID_Retrieve() : "", NULL), Serializable("BotInfo"), channels("ChannelInfo"), botmodes(bmodes)
 {
 	this->lastmsg = this->created = Anope::CurTime;
 	this->introduced = false;
@@ -49,12 +48,15 @@ BotInfo::BotInfo(const Anope::string &nnick, const Anope::string &nuser, const A
 
 BotInfo::~BotInfo()
 {
+	UnsetExtensibles();
+
 	FOREACH_MOD(OnDelBot, (this));
 
 	// If we're synchronised with the uplink already, send the bot.
 	if (Me && Me->IsSynced())
 	{
 		IRCD->SendQuit(this, "");
+		FOREACH_MOD(OnUserQuit, (this, ""));
 		this->introduced = false;
 		XLine x(this->nick);
 		IRCD->SendSQLineDel(&x);
@@ -95,7 +97,7 @@ Serializable* BotInfo::Unserialize(Serializable *obj, Serialize::Data &data)
 	BotInfo *bi;
 	if (obj)
 		bi = anope_dynamic_static_cast<BotInfo *>(obj);
-	else if (!(bi = BotInfo::Find(nick)))
+	else if (!(bi = BotInfo::Find(nick, true)))
 		bi = new BotInfo(nick, user, host, realname);
 
 	data["created"] >> bi->created;
@@ -108,12 +110,29 @@ Serializable* BotInfo::Unserialize(Serializable *obj, Serialize::Data &data)
 
 void BotInfo::GenerateUID()
 {
-	if (!this->uid.empty())
-		throw CoreException("Bot already has a uid?");
+	if (this->introduced)
+		throw CoreException("Changing bot UID when it is introduced?");
 
-	this->uid = Servers::TS6_UID_Retrieve();
+	if (!this->uid.empty())
+	{
+		BotListByUID->erase(this->uid);
+		UserListByUID.erase(this->uid);
+	}
+
+	this->uid = IRCD->UID_Retrieve();
 	(*BotListByUID)[this->uid] = this;
 	UserListByUID[this->uid] = this;
+}
+
+void BotInfo::OnKill()
+{
+	this->introduced = false;
+	this->GenerateUID();
+	IRCD->SendClientIntroduction(this);
+	this->introduced = true;
+
+	for (User::ChanUserList::const_iterator cit = this->chans.begin(), cit_end = this->chans.end(); cit != cit_end; ++cit)
+		IRCD->SendJoin(this, cit->second->chan, &cit->second->status);
 }
 
 void BotInfo::SetNewNick(const Anope::string &newnick)
@@ -195,11 +214,13 @@ void BotInfo::Part(Channel *c, const Anope::string &reason)
 	if (c->FindUser(this) == NULL)
 		return;
 
+	FOREACH_MOD(OnPrePartChannel, (this, c));
+
 	IRCD->SendPart(this, c, "%s", !reason.empty() ? reason.c_str() : "");
 
-	FOREACH_MOD(OnPartChannel, (this, c, c->name, reason));
-
 	c->DeleteUser(this);
+
+	FOREACH_MOD(OnPartChannel, (this, c, c->name, reason));
 }
 
 void BotInfo::OnMessage(User *u, const Anope::string &message)
@@ -230,22 +251,28 @@ CommandInfo *BotInfo::GetCommand(const Anope::string &cname)
 
 BotInfo* BotInfo::Find(const Anope::string &nick, bool nick_only)
 {
-	BotInfo *bi = NULL;
-	if (!nick_only && isdigit(nick[0]) && IRCD->RequiresID)
+	if (!nick_only && IRCD != NULL && IRCD->RequiresID)
 	{
 		botinfo_map::iterator it = BotListByUID->find(nick);
 		if (it != BotListByUID->end())
-			bi = it->second;
-	}
-	else
-	{
-		botinfo_map::iterator it = BotListByNick->find(nick);
-		if (it != BotListByNick->end())
-			bi = it->second;
+		{
+			BotInfo *bi = it->second;
+			bi->QueueUpdate();
+			return bi;
+		}
+
+		if (IRCD->AmbiguousID)
+			return NULL;
 	}
 
-	if (bi)
+	botinfo_map::iterator it = BotListByNick->find(nick);
+	if (it != BotListByNick->end())
+	{
+		BotInfo *bi = it->second;
 		bi->QueueUpdate();
-	return bi;
+		return bi;
+	}
+
+	return NULL;
 }
 

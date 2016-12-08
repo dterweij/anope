@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -38,6 +37,11 @@ sockaddrs::sockaddrs(const Anope::string &address)
 void sockaddrs::clear()
 {
 	memset(this, 0, sizeof(*this));
+}
+
+int sockaddrs::family() const
+{
+	return sa.sa_family;
 }
 
 size_t sockaddrs::size() const
@@ -96,9 +100,9 @@ bool sockaddrs::ipv6() const
 	return sa.sa_family == AF_INET6;
 }
 
-bool sockaddrs::operator()() const
+bool sockaddrs::valid() const
 {
-	return valid();
+	return size() != 0;
 }
 
 bool sockaddrs::operator==(const sockaddrs &other) const
@@ -180,11 +184,6 @@ void sockaddrs::ntop(int type, const void *src)
 	this->clear();
 }
 
-bool sockaddrs::valid() const
-{
-	return size() != 0;
-}
-
 cidr::cidr(const Anope::string &ip)
 {
 	bool ipv6 = ip.find(':') != Anope::string::npos;
@@ -218,6 +217,12 @@ cidr::cidr(const Anope::string &ip, unsigned char len)
 	bool ipv6 = ip.find(':') != Anope::string::npos;
 	this->addr.pton(ipv6 ? AF_INET6 : AF_INET, ip);
 	this->cidr_ip = ip;
+	this->cidr_len = len;
+}
+
+cidr::cidr(const sockaddrs &a, unsigned char len) : addr(a)
+{
+	this->cidr_ip = a.addr();
 	this->cidr_len = len;
 }
 
@@ -348,15 +353,17 @@ size_t cidr::hash::operator()(const cidr &s) const
 
 int SocketIO::Recv(Socket *s, char *buf, size_t sz)
 {
-	size_t i = recv(s->GetFD(), buf, sz, 0);
-	TotalRead += i;
+	int i = recv(s->GetFD(), buf, sz, 0);
+	if (i > 0)
+		TotalRead += i;
 	return i;
 }
 
 int SocketIO::Send(Socket *s, const char *buf, size_t sz)
 {
-	size_t i = send(s->GetFD(), buf, sz, 0);
-	TotalWritten += i;
+	int i = send(s->GetFD(), buf, sz, 0);
+	if (i > 0)
+		TotalWritten += i;
 	return i;
 }
 
@@ -402,7 +409,7 @@ void SocketIO::Connect(ConnectionSocket *s, const Anope::string &target, int por
 	int c = connect(s->GetFD(), &s->conaddr.sa, s->conaddr.size());
 	if (c == -1)
 	{
-		if (Anope::LastErrorCode() != EINPROGRESS)
+		if (!SocketEngine::IgnoreErrno())
 			s->OnError(Anope::LastError());
 		else
 		{
@@ -515,8 +522,8 @@ ListenSocket::ListenSocket(const Anope::string &bindip, int port, bool i)
 {
 	this->SetBlocking(false);
 
-	const char op = 1;
-	setsockopt(this->GetFD(), SOL_SOCKET, SO_REUSEADDR, &op, sizeof(op));
+	const int op = 1;
+	setsockopt(this->GetFD(), SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&op), sizeof(op));
 
 	this->bindaddr.pton(i ? AF_INET6 : AF_INET, bindip, port);
 	this->io->Bind(this, bindip, port);
@@ -540,5 +547,31 @@ bool ListenSocket::ProcessRead()
 		Log() << ex.GetReason();
 	}
 	return true;
+}
+
+int SocketEngine::GetLastError()
+{
+#ifndef _WIN32
+	return errno;
+#else
+	return WSAGetLastError();
+#endif
+}
+
+void SocketEngine::SetLastError(int err)
+{
+#ifndef _WIN32
+	errno = err;
+#else
+	WSASetLastError(err);
+#endif
+}
+
+bool SocketEngine::IgnoreErrno()
+{
+	return GetLastError() == EAGAIN
+		|| GetLastError() == EWOULDBLOCK
+		|| GetLastError() == EINTR
+		|| GetLastError() == EINPROGRESS;
 }
 

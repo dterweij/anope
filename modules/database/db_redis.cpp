@@ -1,11 +1,9 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
- *
  */
 
 #include "module.h"
@@ -139,7 +137,7 @@ class DatabaseRedis : public Module, public Pipe
 	{
 		Serialize::Type *t = obj->GetSerializableType();
 
-		/* If there is no id yet for ths object, get one */
+		/* If there is no id yet for this object, get one */
 		if (!obj->id)
 			redis->SendCommand(new IDInterface(this, obj), "INCR id:" + t->GetName());
 		else

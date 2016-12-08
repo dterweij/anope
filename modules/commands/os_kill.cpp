@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -37,7 +37,7 @@ class CommandOSKill : public Command
 			if (Config->GetModule("operserv")->Get<bool>("addakiller"))
 				reason = "(" + source.GetNick() + ") " + reason;
 			Log(LOG_ADMIN, source, this) << "on " << u2->nick << " for " << reason;
-			u2->Kill(source.service->nick, reason);
+			u2->Kill(*source.service, reason);
 		}
 	}
 

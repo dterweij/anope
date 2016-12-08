@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -271,7 +271,7 @@ public:
 				"To remove a logging method use the same syntax as you would to add it.\n"
 				" \n"
 				"Example:\n"
-				" %s #anope chanserv/access MESSAGE @%\n"
+				" %s #anope chanserv/access MESSAGE @\n"
 				" Would message any channel operators whenever someone used the\n"
 				" ACCESS command on ChanServ on the channel."),
 				source.command.upper().c_str(), source.command.upper().c_str());

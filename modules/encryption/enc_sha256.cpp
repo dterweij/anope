@@ -5,7 +5,7 @@
  * IMPORTANT: DATA HASHES CANNOT BE "DECRYPTED" BACK TO PLAIN TEXT.
  *
  * Modified for Anope.
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Taken from InspIRCd ( www.inspircd.org )
@@ -48,7 +48,7 @@
  */
 
 #include "module.h"
-#include "encryption.h"
+#include "modules/encryption.h"
 
 static const unsigned SHA256_DIGEST_SIZE = 256 / 8;
 static const unsigned SHA256_BLOCK_SIZE = 512 / 8;

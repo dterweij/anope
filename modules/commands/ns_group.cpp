@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -72,18 +72,33 @@ class NSGroupRequest : public IdentifyRequest
 class CommandNSGroup : public Command
 {
  public:
-	CommandNSGroup(Module *creator) : Command(creator, "nickserv/group", 1, 2)
+	CommandNSGroup(Module *creator) : Command(creator, "nickserv/group", 0, 2)
 	{
 		this->SetDesc(_("Join a group"));
-		this->SetSyntax(_("\037target\037 \037password\037"));
+		this->SetSyntax(_("\037[target]\037 \037[password]\037"));
 		this->AllowUnregistered(true);
-		this->RequireUser(true);
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		User *u = source.GetUser();
-		const Anope::string &nick = params[0];
+		User *user = source.GetUser();
+
+		Anope::string nick;
+		if (params.empty())
+		{
+			NickCore* core = source.GetAccount();
+			if (core)
+				nick = core->display;
+		}
+		else
+			nick = params[0];
+
+		if (nick.empty())
+		{
+			this->SendSyntax(source);
+			return;
+		}
+
 		const Anope::string &pass = params.size() > 1 ? params[1] : "";
 
 		if (Anope::ReadOnly)
@@ -92,9 +107,9 @@ class CommandNSGroup : public Command
 			return;
 		}
 
-		if (!IRCD->IsNickValid(u->nick))
+		if (!IRCD->IsNickValid(source.GetNick()))
 		{
-			source.Reply(NICK_CANNOT_BE_REGISTERED, u->nick.c_str());
+			source.Reply(NICK_CANNOT_BE_REGISTERED, source.GetNick().c_str());
 			return;
 		}
 
@@ -103,59 +118,59 @@ class CommandNSGroup : public Command
 			{
 				Oper *o = Oper::opers[i];
 
-				if (!u->HasMode("OPER") && u->nick.find_ci(o->name) != Anope::string::npos)
+				if (user != NULL && !user->HasMode("OPER") && user->nick.find_ci(o->name) != Anope::string::npos)
 				{
-					source.Reply(NICK_CANNOT_BE_REGISTERED, u->nick.c_str());
+					source.Reply(NICK_CANNOT_BE_REGISTERED, user->nick.c_str());
 					return;
 				}
 			}
 
-		NickAlias *target, *na = NickAlias::Find(u->nick);
+		NickAlias *target, *na = NickAlias::Find(source.GetNick());
 		const Anope::string &guestnick = Config->GetModule("nickserv")->Get<const Anope::string>("guestnickprefix", "Guest");
 		time_t reg_delay = Config->GetModule("nickserv")->Get<time_t>("regdelay");
 		unsigned maxaliases = Config->GetModule(this->owner)->Get<unsigned>("maxaliases");
 		if (!(target = NickAlias::Find(nick)))
 			source.Reply(NICK_X_NOT_REGISTERED, nick.c_str());
-		else if (Anope::CurTime < u->lastnickreg + reg_delay)
-			source.Reply(_("Please wait %d seconds before using the GROUP command again."), (reg_delay + u->lastnickreg) - Anope::CurTime);
+		else if (user && Anope::CurTime < user->lastnickreg + reg_delay)
+			source.Reply(_("Please wait %d seconds before using the GROUP command again."), (reg_delay + user->lastnickreg) - Anope::CurTime);
 		else if (target->nc->HasExt("NS_SUSPENDED"))
 		{
 			Log(LOG_COMMAND, source, this) << "and tried to group to SUSPENDED nick " << target->nick;
 			source.Reply(NICK_X_SUSPENDED, target->nick.c_str());
 		}
-		else if (na && *target->nc == *na->nc)
-			source.Reply(_("You are already a member of the group of \002%s\002."), target->nick.c_str());
-		else if (na && na->nc != u->Account())
-			source.Reply(NICK_IDENTIFY_REQUIRED);
 		else if (na && Config->GetModule(this->owner)->Get<bool>("nogroupchange"))
 			source.Reply(_("Your nick is already registered."));
+		else if (na && *target->nc == *na->nc)
+			source.Reply(_("You are already a member of the group of \002%s\002."), target->nick.c_str());
+		else if (na && na->nc != source.GetAccount())
+			source.Reply(NICK_IDENTIFY_REQUIRED);
 		else if (maxaliases && target->nc->aliases->size() >= maxaliases && !target->nc->IsServicesOper())
 			source.Reply(_("There are too many nicks in your group."));
-		else if (u->nick.length() <= guestnick.length() + 7 &&
-			u->nick.length() >= guestnick.length() + 1 &&
-			!u->nick.find_ci(guestnick) && !u->nick.substr(guestnick.length()).find_first_not_of("1234567890"))
+		else if (source.GetNick().length() <= guestnick.length() + 7 &&
+			source.GetNick().length() >= guestnick.length() + 1 &&
+			!source.GetNick().find_ci(guestnick) && !source.GetNick().substr(guestnick.length()).find_first_not_of("1234567890"))
 		{
-			source.Reply(NICK_CANNOT_BE_REGISTERED, u->nick.c_str());
+			source.Reply(NICK_CANNOT_BE_REGISTERED, source.GetNick().c_str());
 		}
 		else
 		{
 			bool ok = false;
-			if (!na && u->Account())
+			if (!na && source.GetAccount() == target->nc)
 				ok = true;
 
 			NSCertList *cl = target->nc->GetExt<NSCertList>("certificates");
-			if (!u->fingerprint.empty() && cl && cl->FindCert(u->fingerprint))
+			if (user != NULL && !user->fingerprint.empty() && cl && cl->FindCert(user->fingerprint))
 				ok = true;
 
 			if (ok == false && !pass.empty())
 			{
-				NSGroupRequest *req = new NSGroupRequest(owner, source, this, u->nick, target, pass);
+				NSGroupRequest *req = new NSGroupRequest(owner, source, this, source.GetNick(), target, pass);
 				FOREACH_MOD(OnCheckAuthentication, (source.GetUser(), req));
 				req->Dispatch();
 			}
 			else
 			{
-				NSGroupRequest req(owner, source, this, u->nick, target, pass);
+				NSGroupRequest req(owner, source, this, source.GetNick(), target, pass);
 
 				if (ok)
 					req.OnSuccess();
@@ -206,20 +221,18 @@ class CommandNSUngroup : public Command
 	{
 		this->SetDesc(_("Remove a nick from a group"));
 		this->SetSyntax(_("[\037nick\037]"));
-		this->RequireUser(true);
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		User *u = source.GetUser();
 		Anope::string nick = !params.empty() ? params[0] : "";
-		NickAlias *na = NickAlias::Find(!nick.empty() ? nick : u->nick);
+		NickAlias *na = NickAlias::Find(!nick.empty() ? nick : source.GetNick());
 
-		if (u->Account()->aliases->size() == 1)
+		if (source.GetAccount()->aliases->size() == 1)
 			source.Reply(_("Your nick is not grouped to anything, you can't ungroup it."));
 		else if (!na)
-			source.Reply(NICK_X_NOT_REGISTERED, !nick.empty() ? nick.c_str() : u->nick.c_str());
-		else if (na->nc != u->Account())
+			source.Reply(NICK_X_NOT_REGISTERED, !nick.empty() ? nick.c_str() : source.GetNick().c_str());
+		else if (na->nc != source.GetAccount())
 			source.Reply(_("Nick %s is not in your group."), na->nick.c_str());
 		else
 		{
@@ -243,7 +256,7 @@ class CommandNSUngroup : public Command
 
 			source.Reply(_("Nick %s has been ungrouped from %s."), na->nick.c_str(), oldcore->display.c_str());
 
-			User *user = User::Find(na->nick);
+			User *user = User::Find(na->nick, true);
 			if (user)
 				/* The user on the nick who was ungrouped may be identified to the old group, set -r */
 				user->RemoveMode(source.service, "REGISTERED");
@@ -297,14 +310,25 @@ class CommandNSGList : public Command
 
 		ListFormatter list(source.GetAccount());
 		list.AddColumn(_("Nick")).AddColumn(_("Expires"));
-		time_t nickserv_expire = Config->GetModule("nickserv")->Get<time_t>("expire");
+		time_t nickserv_expire = Config->GetModule("nickserv")->Get<time_t>("expire", "21d"),
+		       unconfirmed_expire = Config->GetModule("nickserv")->Get<time_t>("unconfirmedexpire", "1d");
 		for (unsigned i = 0; i < nc->aliases->size(); ++i)
 		{
 			const NickAlias *na2 = nc->aliases->at(i);
 
+			Anope::string expires;
+			if (na2->HasExt("NS_NO_EXPIRE"))
+				expires = NO_EXPIRE;
+			else if (!nickserv_expire || Anope::NoExpire)
+				;
+			else if (na2->nc->HasExt("UNCONFIRMED") && unconfirmed_expire)
+				expires = Anope::strftime(na2->time_registered + unconfirmed_expire, source.GetAccount());
+			else
+				expires = Anope::strftime(na2->last_seen + nickserv_expire, source.GetAccount());
+
 			ListFormatter::ListEntry entry;
 			entry["Nick"] = na2->nick;
-			entry["Expires"] = (na2->HasExt("NS_NO_EXPIRE") || !nickserv_expire || Anope::NoExpire) ? "Does not expire" : Anope::strftime(na2->last_seen + nickserv_expire, source.GetAccount());
+			entry["Expires"] = expires;
 			list.AddEntry(entry);
 		}
 

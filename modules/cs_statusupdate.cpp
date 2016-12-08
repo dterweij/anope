@@ -1,5 +1,6 @@
 /*
- * (C) 2003-2014 Anope Team
+ *
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -22,8 +23,8 @@ class StatusUpdate : public Module
 			{
 				User *user = it->second->user;
 
-				ChanAccess::Path p;
-				if (user->server != Me && access->Matches(user, user->Account(), p))
+				ChannelInfo *next;
+				if (user->server != Me && access->Matches(user, user->Account(), next))
 				{
 					AccessGroup ag = ci->AccessFor(user);
 
@@ -45,8 +46,8 @@ class StatusUpdate : public Module
 			{
 				User *user = it->second->user;
 
-				ChanAccess::Path p;
-				if (user->server != Me && access->Matches(user, user->Account(), p))
+				ChannelInfo *next;
+				if (user->server != Me && access->Matches(user, user->Account(), next))
 				{
 					AccessGroup ag = ci->AccessFor(user);
 

@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -37,8 +37,23 @@ class CommandNSConfirm : public Command
 			else
 			{
 				na->nc->Shrink<bool>("UNCONFIRMED");
+				FOREACH_MOD(OnNickConfirm, (source.GetUser(), na->nc));
 				Log(LOG_ADMIN, source, this) << "to confirm nick " << na->nick << " (" << na->nc->display << ")";
 				source.Reply(_("Nick \002%s\002 has been confirmed."), na->nick.c_str());
+
+				/* Login the users online already */
+				for (std::list<User *>::iterator it = na->nc->users.begin(); it != na->nc->users.end(); ++it)
+				{
+					User *u = *it;
+
+					IRCD->SendLogin(u, na);
+
+					NickAlias *u_na = NickAlias::Find(u->nick);
+
+					/* Set +r if they're on a nick in the group */
+					if (!Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && u_na && *u_na->nc == *na->nc)
+						u->SetMode(source.service, "REGISTERED");
+				}
 			}
 		}
 		else if (source.nc)
@@ -51,13 +66,17 @@ class CommandNSConfirm : public Command
 				Log(LOG_COMMAND, source, this) << "to confirm their email";
 				source.Reply(_("Your email address of \002%s\002 has been confirmed."), source.nc->email.c_str());
 				nc->Shrink<bool>("UNCONFIRMED");
+				FOREACH_MOD(OnNickConfirm, (source.GetUser(), nc));
 
 				if (source.GetUser())
 				{
-					IRCD->SendLogin(source.GetUser());
-					const NickAlias *na = NickAlias::Find(source.GetNick());
-					if (!Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && na != NULL && na->nc == source.GetAccount() && !na->nc->HasExt("UNCONFIRMED"))
-						source.GetUser()->SetMode(source.service, "REGISTERED");
+					NickAlias *na = NickAlias::Find(source.GetNick());
+					if (na)
+					{
+						IRCD->SendLogin(source.GetUser(), na);
+						if (!Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && na->nc == source.GetAccount() && !na->nc->HasExt("UNCONFIRMED"))
+							source.GetUser()->SetMode(source.service, "REGISTERED");
+					}
 				}
 			}
 			else
@@ -127,12 +146,6 @@ class CommandNSRegister : public Command
 			return;
 		}
 
-		if (nsregister.equals_ci("mail") && email.empty())
-		{
-			source.Reply(_("You must specify an email address."));
-			return;
-		}
-
 		time_t nickregdelay = Config->GetModule(this->owner)->Get<time_t>("nickregdelay");
 		time_t reg_delay = Config->GetModule("nickserv")->Get<time_t>("regdelay");
 		if (u && !u->HasMode("OPER") && nickregdelay && Anope::CurTime - u->timestamp < nickregdelay)
@@ -159,6 +172,12 @@ class CommandNSRegister : public Command
 			return;
 		}
 
+		if (BotInfo::Find(u_nick, true))
+		{
+			source.Reply(NICK_CANNOT_BE_REGISTERED, u_nick.c_str());
+			return;
+		}
+
 		if (Config->GetModule("nickserv")->Get<bool>("restrictopernicks"))
 			for (unsigned i = 0; i < Oper::opers.size(); ++i)
 			{
@@ -171,6 +190,8 @@ class CommandNSRegister : public Command
 				}
 			}
 
+		unsigned int passlen = Config->GetModule("nickserv")->Get<unsigned>("passlen", "32");
+
 		if (Config->GetModule("nickserv")->Get<bool>("forceemail", "yes") && email.empty())
 			this->OnSyntaxError(source, "");
 		else if (u && Anope::CurTime < u->lastnickreg + reg_delay)
@@ -179,8 +200,8 @@ class CommandNSRegister : public Command
 			source.Reply(NICK_ALREADY_REGISTERED, u_nick.c_str());
 		else if (pass.equals_ci(u_nick) || (Config->GetBlock("options")->Get<bool>("strictpasswords") && pass.length() < 5))
 			source.Reply(MORE_OBSCURE_PASSWORD);
-		else if (pass.length() > Config->GetModule("nickserv")->Get<unsigned>("passlen", "32"))
-			source.Reply(PASSWORD_TOO_LONG);
+		else if (pass.length() > passlen)
+			source.Reply(PASSWORD_TOO_LONG, passlen);
 		else if (!email.empty() && !Mail::Validate(email))
 			source.Reply(MAIL_X_INVALID, email.c_str());
 		else
@@ -201,8 +222,6 @@ class CommandNSRegister : public Command
 
 			Log(LOG_COMMAND, source, this) << "to register " << na->nick << " (email: " << (!na->nc->email.empty() ? na->nc->email : "none") << ")";
 
-			FOREACH_MOD(OnNickRegister, (source.GetUser(), na));
-
 			if (na->nc->GetAccessCount())
 				source.Reply(_("Nickname \002%s\002 registered under your user@host-mask: %s"), u_nick.c_str(), na->nc->GetAccess(0).c_str());
 			else
@@ -219,17 +238,14 @@ class CommandNSRegister : public Command
 			}
 			else if (nsregister.equals_ci("mail"))
 			{
-				nc->Extend<bool>("UNCONFIRMED");
-				if (SendRegmail(u, na, source.service))
+				if (!email.empty())
 				{
-					time_t unconfirmed_expire = Config->GetModule("ns_register")->Get<time_t>("unconfirmedexpire", "1d");
-					BotInfo *bi;
-					Anope::string cmd;
-					if (Command::FindCommandFromService("nickserv/confirm", bi, cmd))
-						source.Reply(_("A passcode has been sent to %s, please type \002%s%s %s <passcode>\002 to confirm your email address."), email.c_str(), Config->StrictPrivmsg.c_str(), bi->nick.c_str(), cmd.c_str());
-					source.Reply(_("If you do not confirm your email address within %s your account will expire."), Anope::Duration(unconfirmed_expire, source.GetAccount()).c_str());
+					nc->Extend<bool>("UNCONFIRMED");
+					SendRegmail(NULL, na, source.service);
 				}
 			}
+
+			FOREACH_MOD(OnNickRegister, (source.GetUser(), na, pass));
 
 			if (u)
 			{
@@ -365,12 +381,12 @@ class NSRegister : public Module
 			if (nsregister.equals_ci("admin"))
 				u->SendMessage(NickServ, _("All new accounts must be validated by an administrator. Please wait for your registration to be confirmed."));
 			else
-				u->SendMessage(NickServ, _("Your email address is not confirmed. To confirm it, follow the instructions that were emailed to you when you registered."));
+				u->SendMessage(NickServ, _("Your email address is not confirmed. To confirm it, follow the instructions that were emailed to you."));
 			const NickAlias *this_na = NickAlias::Find(u->Account()->display);
 			time_t time_registered = Anope::CurTime - this_na->time_registered;
 			time_t unconfirmed_expire = Config->GetModule(this)->Get<time_t>("unconfirmedexpire", "1d");
 			if (unconfirmed_expire > time_registered)
-				u->SendMessage(NickServ, _("Your account will expire, if not confirmed, in %s"), Anope::Duration(unconfirmed_expire - time_registered, u->Account()).c_str());
+				u->SendMessage(NickServ, _("Your account will expire, if not confirmed, in %s."), Anope::Duration(unconfirmed_expire - time_registered, u->Account()).c_str());
 		}
 	}
 

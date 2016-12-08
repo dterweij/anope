@@ -26,7 +26,7 @@ class IRC2SQL : public Module
 	SQL::Query query;
 	std::vector<Anope::string> TableList, ProcedureList, EventList;
 	Anope::string prefix, GeoIPDB;
-	bool quitting, introduced_myself, UseGeoIP, ctcpuser, ctcpeob, firstrun;
+	bool quitting, introduced_myself, ctcpuser, ctcpeob, firstrun;
 	BotInfo *StatServ;
 	PrimitiveExtensibleItem<bool> versionreply;
 
@@ -55,6 +55,7 @@ class IRC2SQL : public Module
 	void OnUserConnect(User *u, bool &exempt) anope_override;
 	void OnUserQuit(User *u, const Anope::string &msg) anope_override;
 	void OnUserNickChange(User *u, const Anope::string &oldnick) anope_override;
+	void OnUserAway(User *u, const Anope::string &message) anope_override;
 	void OnFingerprint(User *u) anope_override;
 	void OnUserModeSet(const MessageSource &setter, User *u, const Anope::string &mname) anope_override;
 	void OnUserModeUnset(const MessageSource &setter, User *u, const Anope::string &mname) anope_override;
@@ -69,7 +70,7 @@ class IRC2SQL : public Module
 	EventReturn OnChannelModeSet(Channel *c, MessageSource &setter, ChannelMode *mode, const Anope::string &param) anope_override;
 	EventReturn OnChannelModeUnset(Channel *c, MessageSource &setter, ChannelMode *mode, const Anope::string &param) anope_override;
 
-	void OnTopicUpdated(Channel *c, const Anope::string &user, const Anope::string &topic) anope_override;
+	void OnTopicUpdated(User *source, Channel *c, const Anope::string &user, const Anope::string &topic) anope_override;
 
 	void OnBotNotice(User *u, BotInfo *bi, Anope::string &message) anope_override;
 };

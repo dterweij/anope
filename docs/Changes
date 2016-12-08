@@ -1,3 +1,91 @@
+Anope Version 2.0.5-git
+-------------------
+
+Anope Version 2.0.4
+-------------------
+Add notice rpc method to XMLRPC
+Fix access check in cs_updown to not allow actions on users with equal access
+Fix randomnews to work when there are more than 'newscount' random news
+Fix crash from handling nick introduction collisions on unreal4
+Add support for GCC6
+Fix handling /join 0 on ratbox
+Fix saset display to update the account of the proper user
+Fix nickserv/confirm to send account and +r when appropriate
+Fix chankill to not add duplicate akills
+Allow nickserv/maxemail to disregard gmail style aliases when comparing emails
+Fix chanserv/mode when setting listmodes with CIDR ranges
+Fix reported expiry time when the time is divisible by 1 year
+Clearify botserv repeat kicker help and allow setting repeat times to 1
+Send vident/vhost with SASL login
+Add support for SASL reauth
+Fix log and database backup directories to be properly created by the installer
+
+Anope Version 2.0.3
+-------------------
+Add support for UnrealIRCd 4
+Fix cs_access to respect chanserv/access/list privilege
+Fix cs_access to match level -1 as every user, not any level <0
+Fix problems related to object destruction order when using db_sql_live
+Show memo notify settings in ms_info
+Fix some actions bumping channels last used time that shouldn't have
+Add maxlogins configuration directive to limit the number of concurrent logins to one account
+Fix race with auto svsnick on ghost sometimes causing nick collisions instead
+Fix saset langauge reply
+Show akill/sxlines ids in VIEW
+Fix crash when an oper is configured in both the configuration and via os_oper
+Fix m_ldap reconnect logic not properly setting protocol and network timeout settings
+Fix crash from unloading regex modules when regex xlines exist
+Fix irc2sql to store away messages
+Add notice method to m_xmlrpc_main
+Fix numerics on InspIRCd from being sent to user UID
+Fix usermode +I on UnrealIRCd to be considered oper only
+Fix crash in webcpanel when deleting your own access on a channel
+Fix webcpanel allowing suspended users to login
+Fix hs_off on InspIRCd to not desync active user host
+Fix bs_bot to not allow colliding bots into users
+Don't allow hostserv modules to load if there is no hostserv
+Fix ns_register allowing bot nicks to be registered through webcpanel
+Don't update chanserv keepmodes during inhabit
+Fix build on cmake 2.4
+Allow searching emails by wildcard in ns_getemail
+
+Anope Version 2.0.2
+-------------------
+Fix keepmodes preventing the first user of a channel from being deopped
+Fix SQlines that don't begin with # from matching channels
+Made cs_clone behave like the help describes, copying many settings and lists by default
+Allow cs_clone to clone levels, too
+Update Hybrid protocol module for 8.2
+Fix not unescaping all characters sent over XMLRPC
+Fix crash when os_mode is used to destroy channels, like when unsetting permanent channel mode from an empty channel
+Allow users with topic change privilege to change the topic instead of requiring them to use ChanServ's topic command
+Fix negatively locking param modes in default mlock
+Change entrymsg to check for the SET privilege, not real founder
+Allow configuring characters allowed in nicknames
+Fix crash when non users register channels externally (like XMLRPC)
+Remove operserv/exception MOVE, it did not function correctly. Instead reorder the list by deleting/adding entries.
+Allow flood ttb to be 0.
+Enforce mlock when disabling defcon modes
+Fix cs_mode not being able to apply mlock on register
+Add log message when users send memos
+Fix old collide timers from staying around after successful identify. Fixes being able to identify and logout and still being hit by the old timers.
+Fix undefined behavior in cs_mode which usually crashes when clearing large list modes
+Show all opertypes in operserv/info, even if no opers use them
+
+Anope Version 2.0.1
+-------------------
+Fix access entries on accounts sometimes not updating when a user's display name changes
+Fix ns_group to properly validate the account of the user against the target
+Fix os_stats not saving max user count and time when using SQL
+Fix nickalias's 'nc' field sometimes not being updated when using SQL
+Fix several crashes on Windows related to being unable to load modules
+Fix bs_bot change not properly reintroducing bots after changing their ident, host, or realname
+
+Add English language file to allow users to easily modify language strings
+Add configuring which mode cs_ban sets, and added a MUTE command to BotServ's fantasy
+Allow SVSPART to take an optional reason
+Allow cs_list to search channel topics and descriptions
+
 Anope Version 2.0.0
 -------------------
 Added irc2sql stats module
@@ -136,8 +224,8 @@ A Added ns_resetpass module to the core
 A CS ACCESS VIEW which shows who added the access and last time used
 A Last used time to CS AKICK VIEW
 A Added a sha_256 encryption module
-A Added the ability to load multiple encryption modules, and the ability to seamlessly convert your database between diferent encryptions
-A Added configuration options to allow Anope to reconnect if it disconnects from the uplink instead of dieing
+A Added the ability to load multiple encryption modules, and the ability to seamlessly convert your database between different encryptions
+A Added configuration options to allow Anope to reconnect if it disconnects from the uplink instead of dying
 A Added support for linking with IPv6
 F Unban command to accept an optional nick arg
 F Some typos in services.conf

@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef PROTOCOL_H
@@ -40,6 +39,9 @@ class CoreExport IRCDProto : public Service
 	virtual void SendNumericInternal(int numeric, const Anope::string &dest, const Anope::string &buf);
 
 	const Anope::string &GetProtocolName();
+	virtual void Parse(const Anope::string &, Anope::string &, Anope::string &, std::vector<Anope::string> &);
+	virtual Anope::string Format(const Anope::string &source, const Anope::string &message);
+
 	/* Modes used by default by our clients */
 	Anope::string DefaultPseudoclientModes;
 	/* Can we force change a users's nick? */
@@ -64,10 +66,16 @@ class CoreExport IRCDProto : public Service
 	bool CanCertFP;
 	/* Whether this IRCd requires unique IDs for each user or server. See TS6/P10. */
 	bool RequiresID;
+	/* If this IRCd has unique ids, whether the IDs and nicknames are ambiguous */
+	bool AmbiguousID;
 	/* The maximum number of modes we are allowed to set with one MODE command */
 	unsigned MaxModes;
 	/* The maximum number of bytes a line may have */
 	unsigned MaxLine;
+
+	/* Retrieves the next free UID or SID */
+	virtual Anope::string UID_Retrieve();
+	virtual Anope::string SID_Retrieve();
 
 	/** Sets the server in NOOP mode. If NOOP mode is enabled, no users
 	 * will be able to oper on the server.
@@ -110,6 +118,8 @@ class CoreExport IRCDProto : public Service
 	/* Nick ban (and sometimes channel) */
 	virtual void SendSQLine(User *, const XLine *x) { }
 	virtual void SendSQLineDel(const XLine *x) { }
+
+	virtual void SendKill(const MessageSource &source, const Anope::string &target, const Anope::string &reason);
 
 	/** Kills a user
 	 * @param source Who is doing the kill
@@ -204,7 +214,7 @@ class CoreExport IRCDProto : public Service
 
 	virtual void SendNumeric(int numeric, const Anope::string &dest, const char *fmt, ...);
 
-	virtual void SendLogin(User *u) = 0;
+	virtual void SendLogin(User *u, NickAlias *na) = 0;
 	virtual void SendLogout(User *u) = 0;
 
 	/** Send a channel creation message to the uplink.
@@ -217,6 +227,10 @@ class CoreExport IRCDProto : public Service
 	 */
 	virtual void SendOper(User *u);
 
+	virtual void SendSASLMechanisms(std::vector<Anope::string> &) { }
+	virtual void SendSASLMessage(const SASL::Message &) { }
+	virtual void SendSVSLogin(const Anope::string &uid, const Anope::string &acc, const Anope::string &vident, const Anope::string &vhost) { }
+
 	virtual bool IsNickValid(const Anope::string &);
 	virtual bool IsChannelValid(const Anope::string &);
 	virtual bool IsIdentValid(const Anope::string &);
@@ -227,6 +241,8 @@ class CoreExport IRCDProto : public Service
 	 * Defaults to Config->ListSize
 	 */
 	virtual unsigned GetMaxListFor(Channel *c);
+
+	virtual Anope::string NormalizeMask(const Anope::string &mask);
 };
 
 class CoreExport MessageSource

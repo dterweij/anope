@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef ACCESS_H
@@ -74,21 +73,17 @@ class CoreExport AccessProvider : public Service
 /* Represents one entry of an access list on a channel. */
 class CoreExport ChanAccess : public Serializable
 {
+	Anope::string mask;
+	/* account this access entry is for, if any */
+	Serialize::Reference<NickCore> nc;
+
  public:
-	typedef std::multimap<const ChanAccess *, const ChanAccess *> Set;
- 	/* shows the 'path' taken to determine if an access entry matches a user
-	 * .first are access entries checked
-	 * .second are access entries which match
-	 */
-	typedef std::pair<Set, Set> Path;
+	typedef std::vector<ChanAccess *> Path;
 
  	/* The provider that created this access entry */
 	AccessProvider *provider;
 	/* Channel this access entry is on */
 	Serialize::Reference<ChannelInfo> ci;
-	/* account this access entry is for, if any */
-	Serialize::Reference<NickCore> nc;
-	Anope::string mask;
 	Anope::string creator;
 	time_t last_seen;
 	time_t created;
@@ -96,15 +91,21 @@ class CoreExport ChanAccess : public Serializable
 	ChanAccess(AccessProvider *p);
 	virtual ~ChanAccess();
 
+	void SetMask(const Anope::string &mask, ChannelInfo *ci);
+	const Anope::string &Mask() const;
+	NickCore *GetAccount() const;
+
 	void Serialize(Serialize::Data &data) const anope_override;
 	static Serializable* Unserialize(Serializable *obj, Serialize::Data &);
+
+	static const unsigned int MAX_DEPTH = 4;
 
 	/** Check if this access entry matches the given user or account
 	 * @param u The user
 	 * @param nc The account
-	 * @param p The path to the access object which matches will be put here
+	 * @param next Next channel to check if any
 	 */
-	virtual bool Matches(const User *u, const NickCore *nc, Path &p) const;
+	virtual bool Matches(const User *u, const NickCore *nc, ChannelInfo* &next) const;
 
 	/** Check if this access entry has the given privilege.
 	 * @param name The privilege name
@@ -132,13 +133,13 @@ class CoreExport ChanAccess : public Serializable
 /* A group of access entries. This is used commonly, for example with ChannelInfo::AccessFor,
  * to show what access a user has on a channel because users can match multiple access entries.
  */
-class CoreExport AccessGroup : public std::vector<ChanAccess *>
+class CoreExport AccessGroup
 {
  public:
+	/* access entries + paths */
+	std::vector<ChanAccess::Path> paths;
 	/* Channel these access entries are on */
  	const ChannelInfo *ci;
-	/* Path from these entries to other entries that they depend on */
-	ChanAccess::Path path;
 	/* Account these entries affect, if any */
 	const NickCore *nc;
 	/* super_admin always gets all privs. founder is a special case where ci->founder == nc */
@@ -166,7 +167,8 @@ class CoreExport AccessGroup : public std::vector<ChanAccess *>
 	bool operator<(const AccessGroup &other) const;
 	bool operator>=(const AccessGroup &other) const;
 	bool operator<=(const AccessGroup &other) const;
+
+	inline bool empty() const { return paths.empty(); }
 };
 
 #endif
-

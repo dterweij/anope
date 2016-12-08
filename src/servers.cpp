@@ -1,13 +1,12 @@
 /* Routines to maintain a list of connected servers
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -38,7 +37,7 @@ Server::Server(Server *up, const Anope::string &sname, unsigned shops, const Ano
 	if (!ssid.empty())
 		Servers::ByID[ssid] = this;
 
-	Log(this, "connect") << "uplinked to " << (this->uplink ? this->uplink->GetName() : "no uplink") << " connected to the network";
+	Log(this, "connect") << "has connected to the network (uplinked to " << (this->uplink ? this->uplink->GetName() : "no uplink") << ")";
 
 	/* Add this server to our uplinks leaf list */
 	if (this->uplink)
@@ -95,7 +94,7 @@ Server::Server(Server *up, const Anope::string &sname, unsigned shops, const Ano
 			{
 				User *u = it->second;
 
-				BotInfo *bi = BotInfo::Find(u->nick);
+				BotInfo *bi = BotInfo::Find(u->GetUID());
 				if (bi)
 				{
 					XLine x(bi->nick, "Reserved for services");
@@ -127,6 +126,8 @@ Server::Server(Server *up, const Anope::string &sname, unsigned shops, const Ano
 
 				if (!c->topic.empty() && !c->topic_setter.empty())
 					IRCD->SendTopic(c->ci->WhoSends(), c);
+
+				c->syncing = true;
 			}
 		}
 	}
@@ -285,7 +286,7 @@ void Server::Sync(bool sync_links)
 
 		FOREACH_MOD(OnUplinkSync, (this));
 
-		if (!Anope::NoFork && Anope::AtTerm())
+		if (!Anope::NoFork)
 		{
 			Log(LOG_TERMINAL) << "Successfully linked, launching into background...";
 			Anope::Fork();
@@ -348,53 +349,6 @@ Server *Server::Find(const Anope::string &name, bool name_only)
 		return it->second;
 	
 	return NULL;
-}
-
-static inline char& nextID(char &c)
-{
-	if (c == 'Z')
-		c = '0';
-	else if (c != '9')
-		++c;
-	else
-		c = 'A';
-	return c;
-}
-
-const Anope::string Servers::TS6_UID_Retrieve()
-{
-	if (!IRCD || !IRCD->RequiresID)
-		return "";
-
-	static Anope::string current_uid = "AAAAAA";
-
-	do
-	{
-		int current_len = current_uid.length() - 1;
-		while (current_len >= 0 && nextID(current_uid[current_len--]) == 'A');
-	}
-	while (User::Find(Me->GetSID() + current_uid) != NULL);
-
-	return Me->GetSID() + current_uid;
-}
-
-const Anope::string Servers::TS6_SID_Retrieve()
-{
-	if (!IRCD || !IRCD->RequiresID)
-		return "";
-
-	static Anope::string current_sid = Config->GetBlock("options")->Get<const Anope::string>("id");
-	if (current_sid.empty())
-		current_sid = "00A";
-
-	do
-	{
-		int current_len = current_sid.length() - 1;
-		while (current_len >= 0 && nextID(current_sid[current_len--]) == 'A');
-	}
-	while (Server::Find(current_sid) != NULL);
-
-	return current_sid;
 }
 
 Server* Servers::GetUplink()

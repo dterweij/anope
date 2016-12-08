@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef CONFIG_H
@@ -51,14 +50,13 @@ namespace Configuration
 		template<typename T> T Get(const Anope::string &tag, const Anope::string &def) const
 		{
 			const Anope::string &value = this->Get<const Anope::string>(tag, def);
-			try
-			{
-				return convertTo<T>(value);
-			}
-			catch (const ConvertException &)
-			{
-				return T();
-			}
+			if (!value.empty())
+				try
+				{
+					return convertTo<T>(value);
+				}
+				catch (const ConvertException &) { }
+			return T();
 		}
 
 		bool Set(const Anope::string &tag, const Anope::string &value);
@@ -104,6 +102,8 @@ namespace Configuration
 		time_t TimeoutCheck;
 		/* options:usestrictprivmsg */
 		bool UseStrictPrivmsg;
+		/* networkinfo:nickchars */
+		Anope::string NickChars;
 
 		/* either "/msg " or "/" */
 		Anope::string StrictPrivmsg;
@@ -132,11 +132,14 @@ namespace Configuration
 		~Conf();
 
 		void LoadConf(File &file);
+		void Post(Conf *old);
 
 		Block *GetModule(Module *);
 		Block *GetModule(const Anope::string &name);
 
 		BotInfo *GetClient(const Anope::string &name);
+
+		Block *GetCommand(CommandSource &);
 	};
 
 	struct Uplink

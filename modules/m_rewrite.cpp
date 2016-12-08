@@ -1,5 +1,6 @@
 /*
- * (C) 2003-2014 Anope Team
+ *
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -115,7 +116,7 @@ class RewriteCommand : public Command
 		{
 			Anope::string new_message = r->Process(source, full_params);
 			Log(LOG_DEBUG) << "m_rewrite: Rewrote '" << source.command << (!params.empty() ? " " + params[0] : "") << "' to '" << new_message << "' using '" << r->source_message << "'";
-			source.service = BotInfo::Find(r->client);
+			source.service = BotInfo::Find(r->client, true);
 			if (!source.service)
 				return;
 			Command::Run(source, new_message);
@@ -153,7 +154,7 @@ class ModuleRewrite : public Module
 	RewriteCommand cmdrewrite;
 
  public:
-	ModuleRewrite(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR), cmdrewrite(this)
+	ModuleRewrite(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR | EXTRA), cmdrewrite(this)
 	{
 	}
 

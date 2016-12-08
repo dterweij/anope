@@ -1,13 +1,12 @@
 /* Common message handlers
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -25,7 +24,13 @@ using namespace Message;
 
 void Away::Run(MessageSource &source, const std::vector<Anope::string> &params)
 {
-	FOREACH_MOD(OnUserAway, (source.GetUser(), params.empty() ? "" : params[0]));
+	const Anope::string &msg = !params.empty() ? params[0] : "";
+
+	FOREACH_MOD(OnUserAway, (source.GetUser(), msg));
+	if (!msg.empty())
+		Log(source.GetUser(), "away") << "is now away: " << msg;
+	else
+		Log(source.GetUser(), "away") << "is no longer away";
 }
 
 void Capab::Run(MessageSource &source, const std::vector<Anope::string> &params)
@@ -76,12 +81,12 @@ void Join::Run(MessageSource &source, const std::vector<Anope::string> &params)
 			for (User::ChanUserList::iterator it = user->chans.begin(), it_end = user->chans.end(); it != it_end; )
 			{
 				ChanUserContainer *cc = it->second;
+				Channel *c = cc->chan;
 				++it;
 
-				Anope::string channame = cc->chan->name;
-				FOREACH_MOD(OnPrePartChannel, (user, cc->chan));
+				FOREACH_MOD(OnPrePartChannel, (user, c));
 				cc->chan->DeleteUser(user);
-				FOREACH_MOD(OnPartChannel, (user, Channel::Find(channame), channame, ""));
+				FOREACH_MOD(OnPartChannel, (user, c, c->name, ""));
 			}
 			continue;
 		}
@@ -128,6 +133,9 @@ void Join::SJoin(MessageSource &source, const Anope::string &chan, time_t ts, co
 		User *u = it->second;
 		keep_their_modes = ts <= c->creation_time; // OnJoinChannel can call modules which can modify this channel's ts
 
+		if (c->FindUser(u))
+			continue;
+
 		/* Add the user to the channel */
 		c->JoinUser(u, keep_their_modes ? &status : NULL);
 
@@ -154,9 +162,7 @@ void Join::SJoin(MessageSource &source, const Anope::string &chan, time_t ts, co
 			c->Sync();
 
 			if (c->CheckDelete())
-				delete c;
-			else
-				c->CheckModes();
+				c->QueueForDeletion();
 		}
 	}
 }
@@ -199,32 +205,31 @@ void Kill::Run(MessageSource &source, const std::vector<Anope::string> &params)
 		}
 		last_time = Anope::CurTime;
 
-		bi->introduced = false;
-		IRCD->SendClientIntroduction(bi);
-		bi->introduced = true;
-
-		for (User::ChanUserList::const_iterator cit = bi->chans.begin(), cit_end = bi->chans.end(); cit != cit_end; ++cit)
-			IRCD->SendJoin(bi, cit->second->chan, &cit->second->status);
+		bi->OnKill();
 	}
 	else
-		u->KillInternal(source.GetSource(), params[1]);
+		u->KillInternal(source, params[1]);
 }
 
 void Message::Mode::Run(MessageSource &source, const std::vector<Anope::string> &params)
 {
+	Anope::string buf;
+	for (unsigned i = 1; i < params.size(); ++i)
+		buf += " " + params[i];
+
 	if (IRCD->IsChannelValid(params[0]))
 	{
 		Channel *c = Channel::Find(params[0]);
 
 		if (c)
-			c->SetModesInternal(source, params[1], 0);
+			c->SetModesInternal(source, buf.substr(1), 0);
 	}
 	else
 	{
 		User *u = User::Find(params[0]);
 
 		if (u)
-			u->SetModesInternal(source, "%s", params[1].c_str());
+			u->SetModesInternal(source, "%s", buf.substr(1).c_str());
 	}
 }
 
@@ -278,16 +283,15 @@ void Part::Run(MessageSource &source, const std::vector<Anope::string> &params)
 
 	while (sep.GetToken(channel))
 	{
-		Reference<Channel> c = Channel::Find(channel);
+		Channel *c = Channel::Find(channel);
 
 		if (!c || !u->FindChannel(c))
 			continue;
 
 		Log(u, c, "part") << "Reason: " << (!reason.empty() ? reason : "No reason");
 		FOREACH_MOD(OnPrePartChannel, (u, c));
-		Anope::string ChannelName = c->name;
 		c->DeleteUser(u);
-		FOREACH_MOD(OnPartChannel, (u, c, ChannelName, !reason.empty() ? reason : ""));
+		FOREACH_MOD(OnPartChannel, (u, c, c->name, !reason.empty() ? reason : ""));
 	}
 }
 
@@ -317,10 +321,12 @@ void Privmsg::Run(MessageSource &source, const std::vector<Anope::string> &param
 		 * us, and strip it off. */
 		Anope::string botname = receiver;
 		size_t s = receiver.find('@');
+		bool nick_only = false;
 		if (s != Anope::string::npos)
 		{
 			Anope::string servername(receiver.begin() + s + 1, receiver.end());
 			botname = botname.substr(0, s);
+			nick_only = true;
 			if (!servername.equals_ci(Me->GetName()))
 				return;
 		}
@@ -334,7 +340,7 @@ void Privmsg::Run(MessageSource &source, const std::vector<Anope::string> &param
 			return;
 		}
 
-		BotInfo *bi = BotInfo::Find(botname);
+		BotInfo *bi = BotInfo::Find(botname, nick_only);
 
 		if (bi)
 		{
@@ -387,6 +393,14 @@ void SQuit::Run(MessageSource &source, const std::vector<Anope::string> &params)
 		return;
 	}
 
+	if (s == Me)
+	{
+		if (Me->GetLinks().empty())
+			return;
+
+		s = Me->GetLinks().front();
+	}
+
 	s->Delete(s->GetName() + " " + s->GetUplink()->GetName());
 }
 
@@ -418,7 +432,7 @@ void Stats::Run(MessageSource &source, const std::vector<Anope::string> &params)
 
 					const NickAlias *na = NickAlias::Find(o->name);
 					if (na)
-						IRCD->SendNumeric(243, source.GetSource(), "O * * %s %s 0", o->name.c_str(), o->ot->GetName().c_str());
+						IRCD->SendNumeric(243, source.GetSource(), "O * * %s %s 0", o->name.c_str(), o->ot->GetName().replace_all_cs(" ", "_").c_str());
 				}
 
 				IRCD->SendNumeric(219, source.GetSource(), "%c :End of /STATS report.", params[0][0]);
@@ -427,7 +441,7 @@ void Stats::Run(MessageSource &source, const std::vector<Anope::string> &params)
 			break;
 		case 'u':
 		{
-			time_t uptime = Anope::CurTime - Anope::StartTime;
+			long uptime = static_cast<long>(Anope::CurTime - Anope::StartTime);
 			IRCD->SendNumeric(242, source.GetSource(), ":Services up %d day%s, %02d:%02d:%02d", uptime / 86400, uptime / 86400 == 1 ? "" : "s", (uptime / 3600) % 24, (uptime / 60) % 60, uptime % 60);
 			IRCD->SendNumeric(250, source.GetSource(), ":Current users: %d (%d ops); maximum %d", UserListByNick.size(), OperCount, MaxUserCount);
 			IRCD->SendNumeric(219, source.GetSource(), "%c :End of /STATS report.", params[0][0]);
@@ -456,7 +470,7 @@ void Topic::Run(MessageSource &source, const std::vector<Anope::string> &params)
 {
 	Channel *c = Channel::Find(params[0]);
 	if (c)
-		c->ChangeTopicInternal(source.GetSource(), params[1], Anope::CurTime);
+		c->ChangeTopicInternal(source.GetUser(), source.GetSource(), params[1], Anope::CurTime);
 
 	return;
 }
@@ -473,7 +487,7 @@ void Whois::Run(MessageSource &source, const std::vector<Anope::string> &params)
 
 	if (u && u->server == Me)
 	{
-		const BotInfo *bi = BotInfo::Find(u->nick);
+		const BotInfo *bi = BotInfo::Find(u->GetUID());
 		IRCD->SendNumeric(311, source.GetSource(), "%s %s %s * :%s", u->nick.c_str(), u->GetIdent().c_str(), u->host.c_str(), u->realname.c_str());
 		if (bi)
 			IRCD->SendNumeric(307, source.GetSource(), "%s :is a registered nick", bi->nick.c_str());

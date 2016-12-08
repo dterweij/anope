@@ -1,6 +1,6 @@
 /* MemoServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -39,9 +39,18 @@ class CommandMSSend : public Command
 			return;
 		}
 
+		if (source.GetAccount()->HasExt("UNCONFIRMED"))
+		{
+			source.Reply(_("You must confirm your account before you may send a memo."));
+			return;
+		}
+
 		MemoServService::MemoResult result = memoserv->Send(source.GetNick(), nick, text);
 		if (result == MemoServService::MEMO_SUCCESS)
+		{
 			source.Reply(_("Memo sent to \002%s\002."), nick.c_str());
+			Log(LOG_COMMAND, source, this) << "to send a memo to " << nick;
+		}
 		else if (result == MemoServService::MEMO_INVALID_TARGET)
 			source.Reply(_("\002%s\002 is not a registered unforbidden nick or channel."), nick.c_str());
 		else if (result == MemoServService::MEMO_TOO_FAST)

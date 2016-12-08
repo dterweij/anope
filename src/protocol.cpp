@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -26,7 +25,7 @@ IRCDProto::IRCDProto(Module *creator, const Anope::string &p) : Service(creator,
 {
 	DefaultPseudoclientModes = "+io";
 	CanSVSNick = CanSVSJoin = CanSetVHost = CanSetVIdent = CanSNLine = CanSQLine = CanSQLineChannel
-		= CanSZLine = CanSVSHold = CanSVSO = CanCertFP = RequiresID = false;
+		= CanSZLine = CanSVSHold = CanSVSO = CanCertFP = RequiresID = AmbiguousID = false;
 	MaxModes = 3;
 	MaxLine = 512;
 
@@ -43,6 +42,61 @@ IRCDProto::~IRCDProto()
 const Anope::string &IRCDProto::GetProtocolName()
 {
 	return this->proto_name;
+}
+
+static inline char nextID(int pos, Anope::string &buf)
+{
+	char &c = buf[pos];
+	if (c == 'Z')
+		c = '0';
+	else if (c != '9')
+		++c;
+	else if (pos)
+		c = 'A';
+	else
+		c = '0';
+	return c;
+}
+
+Anope::string IRCDProto::UID_Retrieve()
+{
+	if (!IRCD || !IRCD->RequiresID)
+		return "";
+
+	static Anope::string current_uid = "AAAAAA";
+
+	do
+	{
+		int current_len = current_uid.length() - 1;
+		while (current_len >= 0 && nextID(current_len--, current_uid) == 'A');
+	}
+	while (User::Find(Me->GetSID() + current_uid) != NULL);
+
+	return Me->GetSID() + current_uid;
+}
+
+Anope::string IRCDProto::SID_Retrieve()
+{
+	if (!IRCD || !IRCD->RequiresID)
+		return "";
+
+	static Anope::string current_sid = Config->GetBlock("serverinfo")->Get<const Anope::string>("id");
+	if (current_sid.empty())
+		current_sid = "00A";
+
+	do
+	{
+		int current_len = current_sid.length() - 1;
+		while (current_len >= 0 && nextID(current_len--, current_sid) == 'A');
+	}
+	while (Server::Find(current_sid) != NULL);
+
+	return current_sid;
+}
+
+void IRCDProto::SendKill(const MessageSource &source, const Anope::string &target, const Anope::string &reason)
+{
+	UplinkSocket::Message(source) << "KILL " << target << " :" << reason;
 }
 
 void IRCDProto::SendSVSKillInternal(const MessageSource &source, User *user, const Anope::string &buf)
@@ -271,7 +325,7 @@ void IRCDProto::SendNickChange(User *u, const Anope::string &newnick)
 
 void IRCDProto::SendForceNickChange(User *u, const Anope::string &newnick, time_t when)
 {
-	UplinkSocket::Message() << "SVSNICK " << u->nick << " " << newnick << " " << when;
+	UplinkSocket::Message() << "SVSNICK " << u->GetUID() << " " << newnick << " " << when;
 }
 
 void IRCDProto::SendCTCP(const MessageSource &source, const Anope::string &dest, const char *fmt, ...)
@@ -310,8 +364,10 @@ bool IRCDProto::IsNickValid(const Anope::string &nick)
 	Anope::string special = "[]\\`_^{|}";
 	
 	for (unsigned i = 0; i < nick.length(); ++i)
-		if (!(nick[i] >= 'A' && nick[i] <= 'Z') && !(nick[i] >= 'a' && nick[i] <= 'z') && special.find(nick[i]) == Anope::string::npos
-		&& (!i || (!(nick[i] >= '0' && nick[i] <= '9') && nick[i] != '-')))
+		if (!(nick[i] >= 'A' && nick[i] <= 'Z') && !(nick[i] >= 'a' && nick[i] <= 'z')
+		  && special.find(nick[i]) == Anope::string::npos
+		  && (Config && Config->NickChars.find(nick[i]) == Anope::string::npos)
+		  && (!i || (!(nick[i] >= '0' && nick[i] <= '9') && nick[i] != '-')))
 			return false;
 	
 	return true;
@@ -320,6 +376,9 @@ bool IRCDProto::IsNickValid(const Anope::string &nick)
 bool IRCDProto::IsChannelValid(const Anope::string &chan)
 {
 	if (chan.empty() || chan[0] != '#' || chan.length() > Config->GetBlock("networkinfo")->Get<unsigned>("chanlen"))
+		return false;
+
+	if (chan.find_first_of(" ,") != Anope::string::npos)
 		return false;
 
 	return true;
@@ -377,6 +436,13 @@ void IRCDProto::SendOper(User *u)
 unsigned IRCDProto::GetMaxListFor(Channel *c)
 {
 	return c->HasMode("LBAN") ? 0 : Config->GetBlock("networkinfo")->Get<int>("modelistsize");
+}
+
+Anope::string IRCDProto::NormalizeMask(const Anope::string &mask)
+{
+	if (IsExtbanValid(mask))
+		return mask;
+	return Entry("", mask).GetNUHMask();
 }
 
 MessageSource::MessageSource(const Anope::string &src) : source(src), u(NULL), s(NULL)

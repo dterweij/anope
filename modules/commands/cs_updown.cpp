@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -81,11 +81,17 @@ class CommandCSUp : public Command
 			}
 
 			User *u = User::Find(nick, true);
+			User *srcu = source.GetUser();
 			bool override = false;
 
 			if (u == NULL)
 			{
 				source.Reply(NICK_X_NOT_IN_USE, nick.c_str());
+				return;
+			}
+			else if (srcu && !srcu->FindChannel(c))
+			{
+				source.Reply(_("You must be in \002%s\002 to use this command."), c->name.c_str());
 				return;
 			}
 			else if (!u->FindChannel(c))
@@ -95,7 +101,7 @@ class CommandCSUp : public Command
 			}
 			else if (source.GetUser() && u != source.GetUser() && c->ci->HasExt("PEACE"))
 			{
-				if (c->ci->AccessFor(u) > c->ci->AccessFor(source.GetUser()))
+				if (c->ci->AccessFor(u) >= c->ci->AccessFor(source.GetUser()))
 				{
 					if (source.HasPriv("chanserv/administration"))
 						override = true;
@@ -118,7 +124,7 @@ class CommandCSUp : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply(_("Updates a selected nicks status modes on a channel. If \037nick\037 is\n"
-				"ommited then your status is updated. If \037channel\037 is ommited then\n"
+				"omitted then your status is updated. If \037channel\037 is omitted then\n"
 				"your channel status is updated on every channel you are in."));
 		return true;
 	}
@@ -130,8 +136,8 @@ class CommandCSDown : public Command
 	{
 		ChanUserContainer *cu = c->FindUser(u);
 		if (cu != NULL)
-			for (size_t i = 0; i < cu->status.Modes().length(); ++i)
-				c->RemoveMode(NULL, ModeManager::FindChannelModeByChar(cu->status.Modes()[i]), u->GetUID());
+			for (size_t i = cu->status.Modes().length(); i > 0;)
+				c->RemoveMode(NULL, ModeManager::FindChannelModeByChar(cu->status.Modes()[--i]), u->GetUID());
 	}
 
  public:
@@ -173,11 +179,17 @@ class CommandCSDown : public Command
 			}
 
 			User *u = User::Find(nick, true);
+			User *srcu = source.GetUser();
 			bool override = false;
 
 			if (u == NULL)
 			{
 				source.Reply(NICK_X_NOT_IN_USE, nick.c_str());
+				return;
+			}
+			else if (srcu && !srcu->FindChannel(c))
+			{
+				source.Reply(_("You must be in \002%s\002 to use this command."), c->name.c_str());
 				return;
 			}
 			else if (!u->FindChannel(c))
@@ -187,7 +199,7 @@ class CommandCSDown : public Command
 			}
 			else if (source.GetUser() && u != source.GetUser() && c->ci->HasExt("PEACE"))
 			{
-				if (c->ci->AccessFor(u) > c->ci->AccessFor(source.GetUser()))
+				if (c->ci->AccessFor(u) >= c->ci->AccessFor(source.GetUser()))
 				{
 					if (source.HasPriv("chanserv/administration"))
 						override = true;
@@ -209,7 +221,7 @@ class CommandCSDown : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply(_("Removes a selected nicks status modes on a channel. If \037nick\037 is\n"
-				"ommited then your status is removed. If \037channel\037 is ommited then\n"
+				"omitted then your status is removed. If \037channel\037 is omitted then\n"
 				"your channel status is removed on every channel you are in."));
 		return true;
 	}

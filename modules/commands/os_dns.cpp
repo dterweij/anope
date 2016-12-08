@@ -1,5 +1,6 @@
 /*
- * (C) 2003-2014 Anope Team
+ *
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -322,6 +323,12 @@ class CommandOSDNS : public Command
 				s->zones.erase(z->name);
 		}
 
+		if (dnsmanager)
+		{
+			dnsmanager->UpdateSerial();
+			dnsmanager->Notify(z->name);
+		}
+
 		source.Reply(_("Zone %s removed."), z->name.c_str());
 		delete z;
 	}
@@ -356,6 +363,12 @@ class CommandOSDNS : public Command
 
 				z->servers.insert(s->GetName());
 				s->zones.insert(zone);
+
+				if (dnsmanager)
+				{
+					dnsmanager->UpdateSerial();
+					dnsmanager->Notify(zone);
+				}
 
 				Log(LOG_ADMIN, source, this) << "to add server " << s->GetName() << " to zone " << z->name;
 
@@ -398,6 +411,12 @@ class CommandOSDNS : public Command
 
 			z->servers.insert(s->GetName());
 			s->zones.insert(z->name);
+
+			if (dnsmanager)
+			{
+				dnsmanager->UpdateSerial();
+				dnsmanager->Notify(z->name);
+			}
 		}
 	}
 
@@ -430,7 +449,14 @@ class CommandOSDNS : public Command
 
 			Log(LOG_ADMIN, source, this) << "to remove server " << s->GetName() << " from zone " << z->name;
 
+			if (dnsmanager)
+			{
+				dnsmanager->UpdateSerial();
+				dnsmanager->Notify(z->name);
+			}
+
 			z->servers.erase(s->GetName());
+			s->zones.erase(z->name);
 			source.Reply(_("Removed server %s from zone %s."), s->GetName().c_str(), z->name.c_str());
 			return;
 		}
@@ -449,6 +475,9 @@ class CommandOSDNS : public Command
 
 		if (Anope::ReadOnly)
 			source.Reply(READ_ONLY_MODE);
+
+		if (dnsmanager)
+			dnsmanager->UpdateSerial();
 
 		Log(LOG_ADMIN, source, this) << "to delete server " << s->GetName();
 		source.Reply(_("Removed server %s."), s->GetName().c_str());
@@ -626,7 +655,7 @@ class CommandOSDNS : public Command
 	}
 
  public:
-	CommandOSDNS(Module *creator) : Command(creator, "operserv/dns", 0, 3)
+	CommandOSDNS(Module *creator) : Command(creator, "operserv/dns", 0, 4)
 	{
 		this->SetDesc(_("Manage DNS zones for this network"));
 		this->SetSyntax(_("ADDZONE \037zone.name\037"));
@@ -911,7 +940,6 @@ class ModuleDNS : public Module
 			if (packet->answers.size() == answer_size)
 			{
 				Log(this) << "Error! There are no servers with any IPs of type " << q.type;
-				/* Send back an empty answer anyway */
 			}
 		}
 	}

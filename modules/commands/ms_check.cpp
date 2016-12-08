@@ -1,6 +1,6 @@
 /* MemoServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -36,7 +36,7 @@ class CommandMSCheck : public Command
 
 		MemoInfo *mi = &na->nc->memos;
 
-		/* Okay, I know this looks strange but we wanna get the LAST memo, so we
+		/* Okay, I know this looks strange but we want to get the LAST memo, so we
 			have to loop backwards */
 
 		for (unsigned i = mi->memos->size(); i > 0; --i)
@@ -67,7 +67,7 @@ class CommandMSCheck : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply(_("Checks whether the _last_ memo you sent to \037nick\037 has been read\n"
-				"or not. Note that this does only work with nicks, not with channels."));
+				"or not. Note that this only works with nicks, not with channels."));
 		return true;
 	}
 };

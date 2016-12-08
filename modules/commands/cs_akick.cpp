@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -71,10 +71,10 @@ class CommandCSAKick : public Command
 		/* Check excepts BEFORE we get this far */
 		if (ci->c)
 		{
-			std::pair<Channel::ModeList::iterator, Channel::ModeList::iterator> modes = ci->c->GetModeList("EXCEPT");
-			for (; modes.first != modes.second; ++modes.first)
+			std::vector<Anope::string> modes = ci->c->GetModeList("EXCEPT");
+			for (unsigned int i = 0; i < modes.size(); ++i)
 			{
-				if (Anope::Match(modes.first->second, mask))
+				if (Anope::Match(modes[i], mask))
 				{
 					source.Reply(CHAN_EXCEPTED, mask.c_str(), ci->name.c_str());
 					return;
@@ -441,9 +441,17 @@ class CommandCSAKick : public Command
 			return;
 		}
 
+		bool is_list = cmd.equals_ci("LIST") || cmd.equals_ci("VIEW");
+		
+		bool has_access = false;
+		if (source.AccessFor(ci).HasPriv("AKICK") || source.HasPriv("chanserv/access/modify"))
+			has_access = true;
+		else if (is_list && source.HasPriv("chanserv/access/list"))
+			has_access = true;
+
 		if (mask.empty() && (cmd.equals_ci("ADD") || cmd.equals_ci("DEL")))
 			this->OnSyntaxError(source, cmd);
-		else if (!source.AccessFor(ci).HasPriv("AKICK") && !source.HasPriv("chanserv/access/modify"))
+		else if (!has_access)
 			source.Reply(ACCESS_DENIED);
 		else if (!cmd.equals_ci("LIST") && !cmd.equals_ci("VIEW") && !cmd.equals_ci("ENFORCE") && Anope::ReadOnly)
 			source.Reply(_("Sorry, channel autokick list modification is temporarily disabled."));
@@ -546,7 +554,11 @@ class CSAKick : public Module
 					mask = autokick->mask;
 				reason = autokick->reason;
 				if (reason.empty())
+				{
 					reason = Language::Translate(u, Config->GetModule(this)->Get<const Anope::string>("autokickreason").c_str());
+					reason = reason.replace_all_cs("%n", u->nick)
+							.replace_all_cs("%c", c->name);
+				}
 				if (reason.empty())
 					reason = Language::Translate(u, _("User has been banned from the channel"));
 				return EVENT_STOP;

@@ -1,11 +1,9 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
- *
  */
 
 #include "extensible.h"
@@ -23,6 +21,11 @@ ExtensibleBase::~ExtensibleBase()
 }
 
 Extensible::~Extensible()
+{
+	UnsetExtensibles();
+}
+
+void Extensible::UnsetExtensibles()
 {
 	while (!extension_items.empty())
 		(*extension_items.begin())->Unset(this);
@@ -49,9 +52,6 @@ void Extensible::ExtensibleSerialize(const Extensible *e, const Serializable *s,
 
 void Extensible::ExtensibleUnserialize(Extensible *e, Serializable *s, Serialize::Data &data)
 {
-	while (!e->extension_items.empty())
-		(*e->extension_items.begin())->Unset(e);
-
 	for (std::set<ExtensibleBase *>::iterator it = extensible_items.begin(); it != extensible_items.end(); ++it)
 	{
 		ExtensibleBase *eb = *it;
@@ -66,7 +66,7 @@ bool* Extensible::Extend(const Anope::string &name, const bool &what)
 	if (ref)
 		return ref->Set(this);
 
-	Log(LOG_DEBUG) << "Extend for nonexistant type " << name << " on " << static_cast<void *>(this);
+	Log(LOG_DEBUG) << "Extend for non-existent type " << name << " on " << static_cast<void *>(this);
 	return NULL;
 }
 

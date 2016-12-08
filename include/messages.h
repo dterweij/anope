@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "protocol.h"
@@ -82,7 +81,7 @@ namespace Message
 
 	struct CoreExport Mode : IRCDMessage
 	{
-		Mode(Module *creator, const Anope::string &mname = "MODE") : IRCDMessage(creator, mname, 2) { }
+		Mode(Module *creator, const Anope::string &mname = "MODE") : IRCDMessage(creator, mname, 2) { SetFlag(IRCDMESSAGE_SOFT_LIMIT); }
 
 		void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override;
 	};
@@ -131,7 +130,7 @@ namespace Message
 	
 	struct CoreExport SQuit : IRCDMessage
 	{
-		SQuit(Module *creator, const Anope::string &mname = "SQUIT") : IRCDMessage(creator, mname, 2) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
+		SQuit(Module *creator, const Anope::string &mname = "SQUIT") : IRCDMessage(creator, mname, 2) { }
 	
 		void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override;
 	};
@@ -172,4 +171,3 @@ namespace Message
 	};
 
 } // namespace Message
-	

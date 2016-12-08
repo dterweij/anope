@@ -1,10 +1,9 @@
 /*
  *
- * (C) 2008-2014 Anope Team
+ * (C) 2008-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #ifndef XLINE_H
@@ -12,12 +11,15 @@
 
 #include "serialize.h"
 #include "service.h"
+#include "sockets.h"
 
 /* An Xline, eg, anything added with operserv/akill, or any of the operserv/sxline commands */
 class CoreExport XLine : public Serializable
 {
-	void InitRegex();
+	void Init();
+	Anope::string nick, user, host, real;
  public:
+	cidr *c;
 	Anope::string mask;
 	Regex *regex;
 	Anope::string by;
@@ -32,10 +34,10 @@ class CoreExport XLine : public Serializable
 	XLine(const Anope::string &mask, const Anope::string &by, const time_t expires, const Anope::string &reason, const Anope::string &uid = "");
 	~XLine();
 
-	Anope::string GetNick() const;
-	Anope::string GetUser() const;
-	Anope::string GetHost() const;
-	Anope::string GetReal() const;
+	const Anope::string &GetNick() const;
+	const Anope::string &GetUser() const;
+	const Anope::string &GetHost() const;
+	const Anope::string &GetReal() const;
 
 	Anope::string GetReason() const;
 
@@ -109,6 +111,8 @@ class CoreExport XLineManager : public Service
 	 * @param x The entry
 	 */
 	void AddXLine(XLine *x);
+
+	void RemoveXLine(XLine *);
 
 	/** Delete an entry from this XLineManager
 	 * @param x The entry

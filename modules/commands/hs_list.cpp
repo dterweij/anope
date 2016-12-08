@@ -1,6 +1,6 @@
 /* HostServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -133,8 +133,8 @@ class CommandHSList : public Command
 	{
 		this->SendSyntax(source);
 		source.Reply(" ");
-		source.Reply(_("This command lists registered vhosts to the operator\n"
-				"if a \037key\037 is specified, only entries whos nick or vhost match\n"
+		source.Reply(_("This command lists registered vhosts to the operator.\n"
+				"If a \037key\037 is specified, only entries whose nick or vhost match\n"
 				"the pattern given in \037key\037 are displayed e.g. Rob* for all\n"
 				"entries beginning with \"Rob\"\n"
 				"If a \037#X-Y\037 style is used, only entries between the range of \002X\002\n"
@@ -152,6 +152,8 @@ class HSList : public Module
 	HSList(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
 		commandhslist(this)
 	{
+		if (!IRCD || !IRCD->CanSetVHost)
+			throw ModuleException("Your IRCd does not support vhosts");
 	}
 };
 

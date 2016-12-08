@@ -1,13 +1,12 @@
 /* Configuration file handling.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -17,13 +16,6 @@
 #include "opertype.h"
 #include "channels.h"
 #include "hashcomp.h"
-
-#ifndef _WIN32
-#include <errno.h>
-#include <sys/types.h>
-#include <pwd.h>
-#include <grp.h>
-#endif
 
 using namespace Configuration;
 
@@ -97,7 +89,7 @@ template<> time_t Block::Get(const Anope::string &tag, const Anope::string &def)
 template<> bool Block::Get(const Anope::string &tag, const Anope::string &def) const
 {
 	const Anope::string &str = Get<const Anope::string>(tag, def);
-	return str.equals_ci("yes") || str.equals_ci("on") || str.equals_ci("true");
+	return !str.empty() && !str.equals_ci("no") && !str.equals_ci("off") && !str.equals_ci("false") && !str.equals_ci("0");
 }
 
 static void ValidateNotEmpty(const Anope::string &block, const Anope::string &name, const Anope::string &value)
@@ -198,6 +190,7 @@ Conf::Conf() : Block("")
 	}
 	this->DefLanguage = options->Get<const Anope::string>("defaultlanguage");
 	this->TimeoutCheck = options->Get<time_t>("timeoutcheck");
+	this->NickChars = networkinfo->Get<Anope::string>("nick_chars");
 
 	for (int i = 0; i < this->CountBlock("uplink"); ++i)
 	{
@@ -401,7 +394,7 @@ Conf::Conf() : Block("")
 
 		LogInfo l(logage, rawio, debug);
 
-		l.bot = BotInfo::Find(log->Get<const Anope::string>("bot", "Global"));
+		l.bot = BotInfo::Find(log->Get<const Anope::string>("bot", "Global"), true);
 		spacesepstream(log->Get<const Anope::string>("target")).GetTokens(l.targets);
 		spacesepstream(log->Get<const Anope::string>("source")).GetTokens(l.sources);
 		spacesepstream(log->Get<const Anope::string>("admin")).GetTokens(l.admin);
@@ -508,6 +501,13 @@ Conf::Conf() : Block("")
 		if (!na)
 			continue;
 
+		if (!na->nc || na->nc->o)
+		{
+			// If the account is already an oper it might mean two oper blocks for the same nick, or
+			// something else has configured them as an oper (like a module)
+			continue;
+		}
+
 		na->nc->o = o;
 		Log() << "Tied oper " << na->nc->display << " to type " << o->ot->GetName();
 	}
@@ -532,62 +532,6 @@ Conf::Conf() : Block("")
 	/* Check the user keys */
 	if (!options->Get<unsigned>("seed"))
 		Log() << "Configuration option options:seed should be set. It's for YOUR safety! Remember that!";
-
-#ifndef _WIN32
-	if (!options->Get<const Anope::string>("user").empty())
-	{
-		errno = 0;
-		struct passwd *u = getpwnam(options->Get<const Anope::string>("user").c_str());
-		if (u == NULL)
-			Log() << "Unable to setuid to " << options->Get<const Anope::string>("user") << ": " << Anope::LastError();
-		else if (setuid(u->pw_uid) == -1)
-			Log() << "Unable to setuid to " << options->Get<const Anope::string>("user") << ": " << Anope::LastError();
-		else
-			Log() << "Successfully set user to " << options->Get<const Anope::string>("user");
-	}
-	if (!options->Get<const Anope::string>("group").empty())
-	{
-		errno = 0;
-		struct group *g = getgrnam(options->Get<const Anope::string>("group").c_str());
-		if (g == NULL)
-			Log() << "Unable to setgid to " << options->Get<const Anope::string>("group") << ": " << Anope::LastError();
-		else if (setuid(g->gr_gid) == -1)
-			Log() << "Unable to setgid to " << options->Get<const Anope::string>("group") << ": " << Anope::LastError();
-		else
-			Log() << "Successfully set group to " << options->Get<const Anope::string>("group");
-	}
-#endif
-
-	if (Config)
-	{
-		/* Apply module chnages */
-		for (unsigned i = 0; i < Config->ModulesAutoLoad.size(); ++i)
-			if (std::find(this->ModulesAutoLoad.begin(), this->ModulesAutoLoad.end(), Config->ModulesAutoLoad[i]) == this->ModulesAutoLoad.end())
-				ModuleManager::UnloadModule(ModuleManager::FindModule(Config->ModulesAutoLoad[i]), NULL);
-		for (unsigned i = 0; i < this->ModulesAutoLoad.size(); ++i)
-			if (std::find(Config->ModulesAutoLoad.begin(), Config->ModulesAutoLoad.end(), this->ModulesAutoLoad[i]) == Config->ModulesAutoLoad.end())
-				ModuleManager::LoadModule(this->ModulesAutoLoad[i], NULL);
-
-		/* Apply opertype changes, as non-conf opers still point to the old oper types */
-		for (unsigned i = Oper::opers.size(); i > 0; --i)
-		{
-			Oper *o = Oper::opers[i - 1];
-
-			/* Oper's type is in the old config, so update it */
-			if (std::find(Config->MyOperTypes.begin(), Config->MyOperTypes.end(), o->ot) != Config->MyOperTypes.end())
-			{
-				OperType *ot = o->ot;
-				o->ot = NULL;
-
-				for (unsigned j = 0; j < MyOperTypes.size(); ++j)
-					if (ot->GetName() == MyOperTypes[j]->GetName())
-						o->ot = MyOperTypes[j];
-
-				if (o->ot == NULL)
-					delete o; /* Oper block has lost type */
-			}
-		}
-	}
 }
 
 Conf::~Conf()
@@ -596,6 +540,48 @@ Conf::~Conf()
 		delete MyOperTypes[i];
 	for (unsigned i = 0; i < Opers.size(); ++i)
 		delete Opers[i];
+}
+
+void Conf::Post(Conf *old)
+{
+	/* Apply module changes */
+	for (unsigned i = 0; i < old->ModulesAutoLoad.size(); ++i)
+		if (std::find(this->ModulesAutoLoad.begin(), this->ModulesAutoLoad.end(), old->ModulesAutoLoad[i]) == this->ModulesAutoLoad.end())
+			ModuleManager::UnloadModule(ModuleManager::FindModule(old->ModulesAutoLoad[i]), NULL);
+	for (unsigned i = 0; i < this->ModulesAutoLoad.size(); ++i)
+		if (std::find(old->ModulesAutoLoad.begin(), old->ModulesAutoLoad.end(), this->ModulesAutoLoad[i]) == old->ModulesAutoLoad.end())
+			ModuleManager::LoadModule(this->ModulesAutoLoad[i], NULL);
+
+	/* Apply opertype changes, as non-conf opers still point to the old oper types */
+	for (unsigned i = Oper::opers.size(); i > 0; --i)
+	{
+		Oper *o = Oper::opers[i - 1];
+
+		/* Oper's type is in the old config, so update it */
+		if (std::find(old->MyOperTypes.begin(), old->MyOperTypes.end(), o->ot) != old->MyOperTypes.end())
+		{
+			OperType *ot = o->ot;
+			o->ot = NULL;
+
+			for (unsigned j = 0; j < MyOperTypes.size(); ++j)
+				if (ot->GetName() == MyOperTypes[j]->GetName())
+					o->ot = MyOperTypes[j];
+
+			if (o->ot == NULL)
+			{
+				/* Oper block has lost type */
+				std::vector<Oper *>::iterator it = std::find(old->Opers.begin(), old->Opers.end(), o);
+				if (it != old->Opers.end())
+					old->Opers.erase(it);
+
+				it = std::find(this->Opers.begin(), this->Opers.end(), o);
+				if (it != this->Opers.end())
+					this->Opers.erase(it);
+
+				delete o;
+			}
+		}
+	}
 }
 
 Block *Conf::GetModule(Module *m)
@@ -639,6 +625,21 @@ BotInfo *Conf::GetClient(const Anope::string &cname)
 	const Anope::string &client = block->Get<const Anope::string>("client");
 	bots[cname] = client;
 	return GetClient(cname);
+}
+
+Block *Conf::GetCommand(CommandSource &source)
+{
+	const Anope::string &block_name = source.c ? "fantasy" : "command";
+
+	for (std::pair<block_map::iterator, block_map::iterator> iters = blocks.equal_range(block_name); iters.first != iters.second; ++iters.first)
+	{
+		Block *b = &iters.first->second;
+
+		if (b->Get<Anope::string>("name") == source.command)
+			return b;
+	}
+
+	return NULL;
 }
 
 File::File(const Anope::string &n, bool e) : name(n), executable(e), fp(NULL)
@@ -708,6 +709,9 @@ Anope::string File::Read()
 
 void Conf::LoadConf(File &file)
 {
+	if (file.GetName().empty())
+		return;
+
 	if (!file.Open())
 		throw ConfigException("File " + file.GetName() + " could not be opened.");
 
@@ -754,8 +758,10 @@ void Conf::LoadConf(File &file)
 				{
 					in_comment = false;
 					++c;
+					// We might be at an eol, so continue on and process it
 				}
-				continue;
+				else
+					continue;
 			}
 			else if (ch == '#' || (ch == '/' && c + 1 < len && line[c + 1] == '/'))
 				c = len - 1; // Line comment, ignore the rest of the line (much like this one!)
@@ -875,12 +881,6 @@ void Conf::LoadConf(File &file)
 
 					if (b)
 						Log(LOG_DEBUG) << "ln " << linenumber << " EOL: s='" << b->name << "' '" << itemname << "' set to '" << wordbuffer << "'";
-
-					if (itemname.empty())
-					{
-						file.Close();
-						throw ConfigException("Item without a name: " + file.GetName() + ":" + stringify(linenumber));
-					}
 
 					/* Check defines */
 					for (int i = 0; i < this->CountBlock("define"); ++i)

@@ -1,6 +1,6 @@
 /* smtp stuff handler for win32.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -105,6 +105,18 @@ static std::string get_logname(struct tm *tm = NULL)
 	strftime(timestamp, sizeof(timestamp), "%Y%m%d", tm);
 	std::string name = std::string("anopesmtp.") + timestamp;
 	return name;
+}
+
+/* TimeStamp for Email Header */
+static std::string GetTimeStamp()
+{
+	char tbuf[256];
+	time_t t = time(NULL);
+	struct tm *tm = localtime(&t);
+
+	strftime(tbuf, sizeof(tbuf) - 1, "%a, %d %b %Y %H:%M:%S %z", tm);
+
+	return tbuf;
 }
 
 /* Log stuff to the log file with a datestamp.  Note that errno is
@@ -417,7 +429,7 @@ int main(int argc, char *argv[])
 
 	if (argc == 1)
 		return 0;
-	
+
 	if (argc == 3 && !strcmp(argv[2], "--debug"))
 		smtp_debug = 1;
 
@@ -468,6 +480,7 @@ int main(int argc, char *argv[])
 				break;
 			else
 			{
+				smail.smtp_headers.push_back("Date: " + GetTimeStamp() + "\r\n");
 				headers_done = true;
 				smail.smtp_body.push_back(strip(buf) + "\r\n");
 			}

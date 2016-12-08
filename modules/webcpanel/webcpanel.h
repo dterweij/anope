@@ -1,5 +1,5 @@
 /*
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -151,7 +151,9 @@ namespace WebPanel
 	 * @param r Replacements, reply from command goes back here into key
 	 * @param key The key to put the replies into r
 	 */
-	extern void RunCommand(const Anope::string &user, NickCore *nc, const Anope::string &service, const Anope::string &c, const std::vector<Anope::string> &params, TemplateFileServer::Replacements &r, const Anope::string &key = "MESSAGES");
+	extern void RunCommand(const Anope::string &user, NickCore *nc, const Anope::string &service, const Anope::string &c, std::vector<Anope::string> &params, TemplateFileServer::Replacements &r, const Anope::string &key = "MESSAGES");
+
+	extern void RunCommandWithName(NickCore *nc, const Anope::string &service, const Anope::string &c, const Anope::string &cmdname, std::vector<Anope::string> &params, TemplateFileServer::Replacements &r, const Anope::string &key = "MESSAGES");
 }
 
 #include "pages/index.h"

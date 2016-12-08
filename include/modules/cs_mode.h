@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -80,11 +80,10 @@ struct ModeLocks
 	virtual const ModeLock *GetMLock(const Anope::string &mname, const Anope::string &param = "") = 0;
 
 	/** Get the current mode locks as a string
-	 * @param complete True to show mlock parameters aswell
+	 * @param complete True to show mlock parameters as well
 	 * @return A string of mode locks, eg: +nrt
 	 */
 	virtual Anope::string GetMLockAsString(bool complete) const = 0;
 
 	virtual void Check() = 0;
 };
-

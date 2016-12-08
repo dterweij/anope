@@ -1,10 +1,9 @@
 /*
  *
- * (C) 2008-2014 Anope Team
+ * (C) 2008-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #include "anope.h"
@@ -74,7 +73,7 @@ namespace Language
 #define MORE_OBSCURE_PASSWORD		_("Please try again with a more obscure password. Passwords should be at least\n" \
 						"five characters long, should not be something easily guessed\n" \
 						"(e.g. your real name or your nick), and cannot contain the space or tab characters.")
-#define PASSWORD_TOO_LONG		_("Your password is too long. Please try again with a shorter password.")
+#define PASSWORD_TOO_LONG		_("Your password is too long. It must not exceed %u characters.")
 #define NICK_NOT_REGISTERED		_("Your nick isn't registered.")
 #define NICK_X_NOT_REGISTERED		_("Nick \002%s\002 isn't registered.")
 #define NICK_X_NOT_IN_USE		_("Nick \002%s\002 isn't currently in use.")
@@ -107,7 +106,7 @@ namespace Language
 #define CHAN_SETTING_UNSET		_("%s for %s unset.")
 #define CHAN_ACCESS_LEVEL_RANGE		_("Access level must be between %d and %d inclusive.")
 #define CHAN_INFO_HEADER		_("Information for channel \002%s\002:")
-#define CHAN_EXCEPTED			_("\002%s\002 matches an except on %s and cannot be banned until the except have been removed.")
+#define CHAN_EXCEPTED			_("\002%s\002 matches an except on %s and cannot be banned until the except has been removed.")
 #define MEMO_NEW_X_MEMO_ARRIVED		_("There is a new memo on channel %s.\n" \
 						"Type \002%s%s READ %s %d\002 to read it.")
 #define MEMO_NEW_MEMO_ARRIVED		_("You have a new memo from %s.\n" \
@@ -126,4 +125,3 @@ namespace Language
 #define HOST_SET_IDENTTOOLONG		_("Error! The vHost ident is too long, please use an ident shorter than %d characters.")
 #define HOST_NOT_ASSIGNED		_("Please contact an Operator to get a vHost assigned to this nick.")
 #define HOST_NO_VIDENT			_("Your IRCd does not support vIdent's, if this is incorrect, please report this as a possible bug")
-

@@ -1,5 +1,6 @@
 /*
- * (C) 2003-2014 Anope Team
+ *
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -14,6 +15,9 @@
 #include "modules/cs_mode.h"
 #include "modules/bs_badwords.h"
 #include "modules/os_news.h"
+#include "modules/suspend.h"
+#include "modules/os_forbid.h"
+#include "modules/cs_entrymsg.h"
 
 #define READ(x) \
 if (true) \
@@ -26,7 +30,7 @@ else \
 
 #define getc_db(f) (fgetc((f)->fp))
 #define read_db(f, buf, len) (fread((buf), 1, (len), (f)->fp))
-#define read_buffer(buf, f) (read_db((f), (buf), sizeof(buf)) == sizeof(buf))
+#define read_buffer(buf, f) ((read_db((f), (buf), sizeof(buf)) == sizeof(buf)) ? 0 : -1)
 
 #define OLD_BI_PRIVATE	0x0001
 
@@ -48,6 +52,7 @@ else \
 #define OLD_NI_AUTOOP		0x00080000 /* Autoop nickname in channels */
 
 #define OLD_NS_NO_EXPIRE		0x0004     /* nick won't expire */
+#define OLD_NS_VERBOTEN			0x0002
 
 #define OLD_CI_KEEPTOPIC		0x00000001
 #define OLD_CI_SECUREOPS		0x00000002
@@ -56,7 +61,7 @@ else \
 #define OLD_CI_RESTRICTED		0x00000010
 #define OLD_CI_PEACE			0x00000020
 #define OLD_CI_SECURE			0x00000040
-#define OLD_CI_FORBIDDEN		0x00000080
+#define OLD_CI_VERBOTEN			0x00000080
 #define OLD_CI_ENCRYPTEDPW		0x00000100
 #define OLD_CI_NO_EXPIRE		0x00000200
 #define OLD_CI_MEMO_HARDMAX		0x00000400
@@ -138,7 +143,7 @@ enum
 	LANG_PL /* Polish */
 };
 
-static void process_mlock(ChannelInfo *ci, uint32_t lock, bool status)
+static void process_mlock(ChannelInfo *ci, uint32_t lock, bool status, uint32_t *limit, Anope::string *key)
 {
 	ModeLocks *ml = ci->Require<ModeLocks>("modelocks");
 	for (unsigned i = 0; i < (sizeof(mlock_infos) / sizeof(mlock_info)); ++i)
@@ -146,7 +151,14 @@ static void process_mlock(ChannelInfo *ci, uint32_t lock, bool status)
 		{
 			ChannelMode *cm = ModeManager::FindChannelModeByChar(mlock_infos[i].c);
 			if (cm && ml)
-				ml->SetMLock(cm, status);
+			{
+				if (limit && mlock_infos[i].c == 'l')
+					ml->SetMLock(cm, status, stringify(*limit));
+				else if (key && mlock_infos[i].c == 'k')
+					ml->SetMLock(cm, status, *key);
+				else
+					ml->SetMLock(cm, status);
+			}
 		}
 }
 
@@ -423,6 +435,7 @@ int read_int32(int32_t *ret, dbFILE *f)
 
 static void LoadNicks()
 {
+	ServiceReference<ForbidService> forbid("ForbidService", "forbid");
 	dbFILE *f = open_db_read("NickServ", "nick.db", 14);
 	if (f == NULL)
 		return;
@@ -441,7 +454,7 @@ static void LoadNicks()
 
 			char pwbuf[32];
 			READ(read_buffer(pwbuf, f));
-			if (hashm == "none")
+			if (hashm == "plain")
 				my_b64_encode(pwbuf, nc->pass);
 			else if (hashm == "md5" || hashm == "oldmd5")
 				nc->pass = Hex(pwbuf, 16);
@@ -495,7 +508,12 @@ static void LoadNicks()
 			if (u32 & OLD_NI_HIDE_STATUS)
 				nc->Extend<bool>("HIDE_STATUS");
 			if (u32 & OLD_NI_SUSPENDED)
-				nc->Extend<bool>("NS_SUSPENDED");
+			{
+				SuspendInfo si;
+				si.what = nc->display;
+				si.when = si.expires = 0;
+				nc->Extend("NS_SUSPENDED", si);
+			}
 			if (!(u32 & OLD_NI_AUTOOP))
 				nc->Extend<bool>("AUTOOP");
 
@@ -504,40 +522,40 @@ static void LoadNicks()
 			switch (u16)
 			{
 				case LANG_ES:
-					nc->language = "es_ES";
+					nc->language = "es_ES.UTF-8";
 					break;
 				case LANG_PT:
-					nc->language = "pt_PT";
+					nc->language = "pt_PT.UTF-8";
 					break;
 				case LANG_FR:
-					nc->language = "fr_FR";
+					nc->language = "fr_FR.UTF-8";
 					break;
 				case LANG_TR:
-					nc->language = "tr_TR";
+					nc->language = "tr_TR.UTF-8";
 					break;
 				case LANG_IT:
-					nc->language = "it_IT";
+					nc->language = "it_IT.UTF-8";
 					break;
 				case LANG_DE:
-					nc->language = "de_DE";
+					nc->language = "de_DE.UTF-8";
 					break;
 				case LANG_CAT:
-					nc->language = "ca_ES"; // yes, iso639 defines catalan as CA
+					nc->language = "ca_ES.UTF-8"; // yes, iso639 defines catalan as CA
 					break;
 				case LANG_GR:
-					nc->language = "el_GR";
+					nc->language = "el_GR.UTF-8";
 					break;
 				case LANG_NL:
-					nc->language = "nl_NL";
+					nc->language = "nl_NL.UTF-8";
 					break;
 				case LANG_RU:
-					nc->language = "ru_RU";
+					nc->language = "ru_RU.UTF-8";
 					break;
 				case LANG_HUN:
-					nc->language = "hu_HU";
+					nc->language = "hu_HU.UTF-8";
 					break;
 				case LANG_PL:
-					nc->language = "pl_PL";
+					nc->language = "pl_PL.UTF-8";
 					break;
 				case LANG_EN_US:
 				case LANG_JA_JIS:
@@ -572,6 +590,7 @@ static void LoadNicks()
 				READ(read_string(m->text, f));
 				m->owner = nc->display;
 				nc->memos.memos->push_back(m);
+				m->mi = &nc->memos;
 			}
 			READ(read_uint16(&u16, f));
 			READ(read_int16(&i16, f));
@@ -607,6 +626,33 @@ static void LoadNicks()
 				Log() << "Skipping coreless nick " << nick << " with core " << core;
 				continue;
 			}
+
+			if (tmpu16 & OLD_NS_VERBOTEN)
+			{
+				if (!forbid)
+				{
+					delete nc;
+					continue;
+				}
+
+				if (nc->display.find_first_of("?*") != Anope::string::npos)
+				{
+					delete nc;
+					continue;
+				}
+
+				ForbidData *d = forbid->CreateForbid();
+				d->mask = nc->display;
+				d->creator = last_usermask;
+				d->reason = last_realname;
+				d->expires = 0;
+				d->created = 0;
+				d->type = FT_NICK;
+				delete nc;
+				forbid->AddForbid(d);
+				continue;
+			}
+
 			NickAlias *na = new NickAlias(nick, nc);
 			na->last_usermask = last_usermask;
 			na->last_realname = last_realname;
@@ -643,7 +689,7 @@ static void LoadVHosts()
 		NickAlias *na = NickAlias::Find(nick);
 		if (na == NULL)
 		{
-			Log() << "Removing vhost for nonexistant nick " << nick;
+			Log() << "Removing vhost for non-existent nick " << nick;
 			continue;
 		}
 
@@ -675,7 +721,7 @@ static void LoadBots()
 		READ(read_int32(&created, f));
 		READ(read_int16(&chancount, f));
 
-		BotInfo *bi = BotInfo::Find(nick);
+		BotInfo *bi = BotInfo::Find(nick, true);
 		if (!bi)
 			bi = new BotInfo(nick, user, host, real);
 		bi->created = created;
@@ -691,6 +737,7 @@ static void LoadBots()
 
 static void LoadChannels()
 {
+	ServiceReference<ForbidService> forbid("ForbidService", "forbid");
 	dbFILE *f = open_db_read("ChanServ", "chan.db", 16);
 	if (f == NULL)
 		return;
@@ -755,7 +802,7 @@ static void LoadChannels()
 			if (tmpu32 & OLD_CI_SECURE)
 				ci->Extend<bool>("CS_SECURE");
 			if (tmpu32 & OLD_CI_NO_EXPIRE)
-				ci->Extend<bool>("CI_NO_EXPIRE");
+				ci->Extend<bool>("CS_NO_EXPIRE");
 			if (tmpu32 & OLD_CI_MEMO_HARDMAX)
 				ci->Extend<bool>("MEMO_HARDMAX");
 			if (tmpu32 & OLD_CI_SECUREFOUNDER)
@@ -764,11 +811,20 @@ static void LoadChannels()
 				ci->Extend<bool>("SIGNKICK");
 			if (tmpu32 & OLD_CI_SIGNKICK_LEVEL)
 				ci->Extend<bool>("SIGNKICK_LEVEL");
-			if (tmpu32 & OLD_CI_SUSPENDED)
-				ci->Extend<bool>("CS_SUSPENDED");
 
-			READ(read_string(buffer, f));
-			READ(read_string(buffer, f));
+			Anope::string forbidby, forbidreason;
+			READ(read_string(forbidby, f));
+			READ(read_string(forbidreason, f));
+			if (tmpu32 & OLD_CI_SUSPENDED)
+			{
+				SuspendInfo si;
+				si.what = ci->name;
+				si.by = forbidby;
+				si.reason = forbidreason;
+				si.when = si.expires = 0;
+				ci->Extend("CS_SUSPENDED", si);
+			}
+			bool forbid_chan = tmpu32 & OLD_CI_VERBOTEN;
 
 			int16_t tmp16;
 			READ(read_int16(&tmp16, f));
@@ -791,7 +847,8 @@ static void LoadChannels()
 				ci->SetLevel(GetLevelName(j), level);
 			}
 
-			ServiceReference<AccessProvider> provider("AccessProvider", "access/access");
+			bool xop = tmpu32 & OLD_CI_XOP;
+			ServiceReference<AccessProvider> provider_access("AccessProvider", "access/access"), provider_xop("AccessProvider", "access/xop");
 			uint16_t tmpu16;
 			READ(read_uint16(&tmpu16, f));
 			for (uint16_t j = 0; j < tmpu16; ++j)
@@ -800,19 +857,50 @@ static void LoadChannels()
 				READ(read_uint16(&in_use, f));
 				if (in_use)
 				{
-					ChanAccess *access = provider ? provider->Create() : NULL;
+					ChanAccess *access = NULL;
+					
+					if (xop)
+					{
+						if (provider_xop)
+							access = provider_xop->Create();
+					}
+					else
+						if (provider_access)
+							access = provider_access->Create();
+
 					if (access)
 						access->ci = ci;
 
 					int16_t level;
 					READ(read_int16(&level, f));
 					if (access)
-						access->AccessUnserialize(stringify(level));
+					{
+						if (xop)
+						{
+							switch (level)
+							{
+								case 3:
+									access->AccessUnserialize("VOP");
+									break;
+								case 4:
+									access->AccessUnserialize("HOP");
+									break;
+								case 5:
+									access->AccessUnserialize("AOP");
+									break;
+								case 10:
+									access->AccessUnserialize("SOP");
+									break;
+							}
+						}
+						else
+							access->AccessUnserialize(stringify(level));
+					}
 
 					Anope::string mask;
 					READ(read_string(mask, f));
 					if (access)
-						access->mask = mask;
+						access->SetMask(mask, ci);
 
 					READ(read_int32(&tmp32, f));
 					if (access)
@@ -848,9 +936,11 @@ static void LoadChannels()
 			READ(read_uint32(&tmpu32, f)); // mlock off
 			ci->Extend<uint32_t>("mlock_off", tmpu32);
 			READ(read_uint32(&tmpu32, f)); // mlock limit
-			READ(read_string(buffer, f));
-			READ(read_string(buffer, f));
-			READ(read_string(buffer, f));
+			ci->Extend<uint32_t>("mlock_limit", tmpu32);
+			READ(read_string(buffer, f)); // key
+			ci->Extend<Anope::string>("mlock_key", buffer);
+			READ(read_string(buffer, f)); // +f
+			READ(read_string(buffer, f)); // +L
 
 			READ(read_int16(&tmp16, f));
 			READ(read_int16(&ci->memos.memomax, f));
@@ -867,12 +957,28 @@ static void LoadChannels()
 				READ(read_string(m->text, f));
 				m->owner = ci->name;
 				ci->memos.memos->push_back(m);
+				m->mi = &ci->memos;
 			}
 
 			READ(read_string(buffer, f));
+			if (!buffer.empty())
+			{
+				EntryMessageList *eml = ci->Require<EntryMessageList>("entrymsg");
+				if (eml)
+				{
+					EntryMsg *e = eml->Create();
+
+					e->chan = ci->name;
+					e->creator = "Unknown";
+					e->message = buffer;
+					e->when = Anope::CurTime;
+
+					(*eml)->push_back(e);
+				}
+			}
 
 			READ(read_string(buffer, f));
-			ci->bi = BotInfo::Find(buffer);
+			ci->bi = BotInfo::Find(buffer, true);
 
 			READ(read_int32(&tmp32, f));
 			if (tmp32 & OLD_BS_DONTKICKOPS)
@@ -955,6 +1061,32 @@ static void LoadChannels()
 					if (bw)
 						bw->AddBadWord(buffer, bwtype);
 				}
+			}
+
+			if (forbid_chan)
+			{
+				if (!forbid)
+				{
+					delete ci;
+					continue;
+				}
+
+				if (ci->name.find_first_of("?*") != Anope::string::npos)
+				{
+					delete ci;
+					continue;
+				}
+
+				ForbidData *d = forbid->CreateForbid();
+				d->mask = ci->name;
+				d->creator = forbidby;
+				d->reason = forbidreason;
+				d->expires = 0;
+				d->created = 0;
+				d->type = FT_CHAN;
+				delete ci;
+				forbid->AddForbid(d);
+				continue;
 			}
 
 			Log(LOG_DEBUG) << "Loaded channel " << ci->name;
@@ -1166,17 +1298,18 @@ static void LoadNews()
 
 class DBOld : public Module
 {
-	PrimitiveExtensibleItem<uint32_t> mlock_on, mlock_off;
+	PrimitiveExtensibleItem<uint32_t> mlock_on, mlock_off, mlock_limit;
+	PrimitiveExtensibleItem<Anope::string> mlock_key;
 
  public:
 	DBOld(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, DATABASE | VENDOR),
-		mlock_on(this, "mlock_on"), mlock_off(this, "mlock_off")
+		mlock_on(this, "mlock_on"), mlock_off(this, "mlock_off"), mlock_limit(this, "mlock_limit"), mlock_key(this, "mlock_key")
 	{
 
 
 		hashm = Config->GetModule(this)->Get<const Anope::string>("hash");
 
-		if (hashm != "md5" && hashm != "oldmd5" && hashm != "sha1" && hashm != "none" && hashm != "sha256")
+		if (hashm != "md5" && hashm != "oldmd5" && hashm != "sha1" && hashm != "plain" && hashm != "sha256")
 			throw ModuleException("Invalid hash method");
 	}
 
@@ -1198,20 +1331,28 @@ class DBOld : public Module
 		for (registered_channel_map::iterator it = RegisteredChannelList->begin(), it_end = RegisteredChannelList->end(); it != it_end; ++it)
 		{
 			ChannelInfo *ci = it->second;
+			uint32_t *limit = mlock_limit.Get(ci);
+			Anope::string *key = mlock_key.Get(ci);
 
 			uint32_t *u = mlock_on.Get(ci);
 			if (u)
 			{
-				process_mlock(ci, *u, true);
+				process_mlock(ci, *u, true, limit, key);
 				mlock_on.Unset(ci);
 			}
 
 			u = mlock_off.Get(ci);
 			if (u)
 			{
-				process_mlock(ci, *u, false);
+				process_mlock(ci, *u, false, limit, key);
 				mlock_off.Unset(ci);
 			}
+
+			mlock_limit.Unset(ci);
+			mlock_key.Unset(ci);
+
+			if (ci->c)
+				ci->c->CheckModes();
 		}
 	}
 };

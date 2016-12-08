@@ -1,13 +1,12 @@
 /* ircd-hybrid-8 protocol module
  *
- * (C) 2003-2014 Anope Team
- * (C) 2012-2013 by the Hybrid Development Team
+ * (C) 2003-2016 Anope Team <team@anope.org>
+ * (C) 2012-2016 ircd-hybrid development team
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "module.h"
@@ -16,25 +15,46 @@ static Anope::string UplinkSID;
 
 class HybridProto : public IRCDProto
 {
-	void SendSVSKillInternal(const MessageSource &source, User *user, const Anope::string &buf) anope_override
+	BotInfo *FindIntroduced()
 	{
-		IRCDProto::SendSVSKillInternal(source, user, buf);
-		user->KillInternal(source, buf);
+		BotInfo *bi = Config->GetClient("OperServ");
+
+		if (bi && bi->introduced)
+			return bi;
+
+		for (botinfo_map::iterator it = BotListByNick->begin(), it_end = BotListByNick->end(); it != it_end; ++it)
+			if (it->second->introduced)
+				return it->second;
+
+		return NULL;
+	}
+
+	void SendSVSKillInternal(const MessageSource &source, User *u, const Anope::string &buf) anope_override
+	{
+		IRCDProto::SendSVSKillInternal(source, u, buf);
+		u->KillInternal(source, buf);
 	}
 
   public:
-	HybridProto(Module *creator) : IRCDProto(creator, "Hybrid 8.1.x")
+	HybridProto(Module *creator) : IRCDProto(creator, "Hybrid 8.2.x")
 	{
 		DefaultPseudoclientModes = "+oi";
 		CanSVSNick = true;
+		CanSVSHold = true;
+		CanSVSJoin = true;
 		CanSNLine = true;
 		CanSQLine = true;
+		CanSQLineChannel = true;
 		CanSZLine = true;
-		CanSVSHold = true;
 		CanCertFP = true;
 		CanSetVHost = true;
 		RequiresID = true;
-		MaxModes = 4;
+		MaxModes = 6;
+	}
+
+	void SendInvite(const MessageSource &source, const Channel *c, User *u) anope_override
+	{
+		UplinkSocket::Message(source) << "INVITE " << u->GetUID() << " " << c->name << " " << c->creation_time;
 	}
 
 	void SendGlobalNotice(BotInfo *bi, const Server *dest, const Anope::string &msg) anope_override
@@ -47,14 +67,9 @@ class HybridProto : public IRCDProto
 		UplinkSocket::Message(bi) << "PRIVMSG $$" << dest->GetName() << " :" << msg;
 	}
 
-	void SendGlobopsInternal(const MessageSource &source, const Anope::string &buf) anope_override
-	{
-		UplinkSocket::Message(source) << "GLOBOPS :" << buf;
-	}
-
 	void SendSQLine(User *, const XLine *x) anope_override
 	{
-		UplinkSocket::Message(Config->GetClient("OperServ")) << "ENCAP * RESV " << (x->expires ? x->expires - Anope::CurTime : 0) << " " << x->mask << " 0 :" << x->reason;
+		UplinkSocket::Message(FindIntroduced()) << "RESV * " << (x->expires ? x->expires - Anope::CurTime : 0) << " " << x->mask << " :" << x->reason;
 	}
 
 	void SendSGLineDel(const XLine *x) anope_override
@@ -64,7 +79,7 @@ class HybridProto : public IRCDProto
 
 	void SendSGLine(User *, const XLine *x) anope_override
 	{
-		UplinkSocket::Message(Config->GetClient("OperServ")) << "XLINE * " << x->mask << " 0 :" << x->GetReason();
+		UplinkSocket::Message(Config->GetClient("OperServ")) << "XLINE * " << x->mask << " " << (x->expires ? x->expires - Anope::CurTime : 0) << " :" << x->GetReason();
 	}
 
 	void SendSZLineDel(const XLine *x) anope_override
@@ -96,23 +111,21 @@ class HybridProto : public IRCDProto
 		UplinkSocket::Message(Config->GetClient("OperServ")) << "UNRESV * " << x->mask;
 	}
 
-	void SendJoin(User *user, Channel *c, const ChannelStatus *status) anope_override
+	void SendJoin(User *u, Channel *c, const ChannelStatus *status) anope_override
 	{
 		/*
-		 * Note that we must send our modes with the SJOIN and
-		 * can not add them to the mode stacker because ircd-hybrid
-		 * does not allow *any* client to op itself
+		 * Note that we must send our modes with the SJOIN and can not add them to the
+		 * mode stacker because ircd-hybrid does not allow *any* client to op itself
 		 */
-		UplinkSocket::Message() << "SJOIN " << c->creation_time << " " << c->name << " +"
-					<< c->GetModes(true, true) << " :"
-					<< (status != NULL ? status->BuildModePrefixList() : "") << user->GetUID();
+		UplinkSocket::Message() << "SJOIN " << c->creation_time << " " << c->name << " +" << c->GetModes(true, true) << " :"
+					<< (status != NULL ? status->BuildModePrefixList() : "") << u->GetUID();
 
 		/* And update our internal status for this user since this is not going through our mode handling system */
-		if (status != NULL)
+		if (status)
 		{
-			ChanUserContainer *uc = c->FindUser(user);
+			ChanUserContainer *uc = c->FindUser(u);
 
-			if (uc != NULL)
+			if (uc)
 				uc->status = *status;
 		}
 	}
@@ -161,9 +174,9 @@ class HybridProto : public IRCDProto
 	void SendServer(const Server *server) anope_override
 	{
 		if (server == Me)
-			UplinkSocket::Message() << "SERVER " << server->GetName() << " " << server->GetHops() << " :" << server->GetDescription();
+			UplinkSocket::Message() << "SERVER " << server->GetName() << " " << server->GetHops() + 1 << " :" << server->GetDescription();
 		else
-			UplinkSocket::Message(Me) << "SID " << server->GetName() << " " << server->GetHops() << " " << server->GetSID() << " :" << server->GetDescription();
+			UplinkSocket::Message(Me) << "SID " << server->GetName() << " " << server->GetHops() + 1 << " " << server->GetSID() << " :" << server->GetDescription();
 	}
 
 	void SendConnect() anope_override
@@ -171,26 +184,24 @@ class HybridProto : public IRCDProto
 		UplinkSocket::Message() << "PASS " << Config->Uplinks[Anope::CurrentUplink].password << " TS 6 :" << Me->GetSID();
 
 		/*
-		 * As of October 13, 2012, ircd-hybrid-8 does support the following capabilities
+		 * As of January 13, 2016, ircd-hybrid-8 does support the following capabilities
 		 * which are required to work with IRC-services:
 		 *
 		 * QS     - Can handle quit storm removal
 		 * EX     - Can do channel +e exemptions
-		 * CHW    - Can do channel wall @#
 		 * IE     - Can do invite exceptions
-		 * KNOCK  - Supports KNOCK
+		 * CHW    - Can do channel wall @#
 		 * TBURST - Supports topic burst
 		 * ENCAP  - Supports ENCAP
 		 * HOPS   - Supports HalfOps
 		 * SVS    - Supports services
 		 * EOB    - Supports End Of Burst message
-		 * TS6    - Capable of TS6 support
 		 */
-		UplinkSocket::Message() << "CAPAB :QS EX CHW IE ENCAP TBURST SVS HOPS EOB TS6";
+		UplinkSocket::Message() << "CAPAB :QS EX CHW IE ENCAP TBURST SVS HOPS EOB";
 
 		SendServer(Me);
 
-		UplinkSocket::Message() << "SVINFO 6 5 0 :" << Anope::CurTime;
+		UplinkSocket::Message() << "SVINFO 6 6 0 :" << Anope::CurTime;
 	}
 
 	void SendClientIntroduction(User *u) anope_override
@@ -198,7 +209,7 @@ class HybridProto : public IRCDProto
 		Anope::string modes = "+" + u->GetModes();
 
 		UplinkSocket::Message(Me) << "UID " << u->nick << " 1 " << u->timestamp << " " << modes << " "
-					 << u->GetIdent() << " " << u->host << " 0 " << u->GetUID() << " 0 :" << u->realname;
+					 << u->GetIdent() << " " << u->host << " 0.0.0.0 " << u->GetUID() << " * :" << u->realname;
 	}
 
 	void SendEOB() anope_override
@@ -211,14 +222,14 @@ class HybridProto : public IRCDProto
 		UplinkSocket::Message(source) << "SVSMODE " << u->GetUID() << " " << u->timestamp << " " << buf;
 	}
 
-	void SendLogin(User *u) anope_override
+	void SendLogin(User *u, NickAlias *na) anope_override
 	{
-		IRCD->SendMode(Config->GetClient("NickServ"), u, "+d %s", u->Account()->display.c_str());
+		IRCD->SendMode(Config->GetClient("NickServ"), u, "+d %s", na->nc->display.c_str());
 	}
 
 	void SendLogout(User *u) anope_override
 	{
-		IRCD->SendMode(Config->GetClient("NickServ"), u, "+d 0");
+		IRCD->SendMode(Config->GetClient("NickServ"), u, "+d *");
 	}
 
 	void SendChannel(Channel *c) anope_override
@@ -233,26 +244,25 @@ class HybridProto : public IRCDProto
 
 	void SendTopic(const MessageSource &source, Channel *c) anope_override
 	{
-		BotInfo *bi = source.GetBot();
-		bool needjoin = c->FindUser(bi) == NULL;
-
-		if (needjoin)
-		{
-			ChannelStatus status;
-
-			status.AddMode('o');
-			bi->Join(c, &status);
-		}
-
-		IRCDProto::SendTopic(source, c);
-
-		if (needjoin)
-			bi->Part(c);
+		UplinkSocket::Message(source) << "TBURST " << c->creation_time << " " << c->name << " " << c->topic_ts << " " << c->topic_setter << " :" << c->topic;
 	}
 
 	void SendForceNickChange(User *u, const Anope::string &newnick, time_t when) anope_override
 	{
-		UplinkSocket::Message(Me) << "SVSNICK " << u->nick << " " << newnick << " " << when;
+		UplinkSocket::Message(Me) << "SVSNICK " << u->GetUID() << " " << newnick << " " << when;
+	}
+
+	void SendSVSJoin(const MessageSource &source, User *u, const Anope::string &chan, const Anope::string &) anope_override
+	{
+		UplinkSocket::Message(source) << "SVSJOIN " << u->GetUID() << " " << chan;
+	}
+
+	void SendSVSPart(const MessageSource &source, User *u, const Anope::string &chan, const Anope::string &param) anope_override
+	{
+		if (!param.empty())
+			UplinkSocket::Message(source) << "SVSPART " << u->GetUID() << " " << chan << " :" << param;
+		else
+			UplinkSocket::Message(source) << "SVSPART " << u->GetUID() << " " << chan;
 	}
 
 	void SendSVSHold(const Anope::string &nick, time_t t) anope_override
@@ -316,6 +326,7 @@ struct IRCDMessageBMask : IRCDMessage
 		{
 			spacesepstream bans(params[3]);
 			Anope::string token;
+
 			while (bans.GetToken(token))
 				c->SetModeInternal(source, mode, token);
 		}
@@ -422,9 +433,11 @@ struct IRCDMessageSJoin : IRCDMessage
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
 		Anope::string modes;
+
 		if (params.size() >= 3)
 			for (unsigned i = 2; i < params.size() - 1; ++i)
 				modes += " " + params[i];
+
 		if (!modes.empty())
 			modes.erase(modes.begin());
 
@@ -447,7 +460,7 @@ struct IRCDMessageSJoin : IRCDMessage
 			sju.second = User::Find(buf);
 			if (!sju.second)
 			{
-				Log(LOG_DEBUG) << "SJOIN for nonexistant user " << buf << " on " << params[1];
+				Log(LOG_DEBUG) << "SJOIN for non-existent user " << buf << " on " << params[1];
 				continue;
 			}
 
@@ -472,6 +485,7 @@ struct IRCDMessageSVSMode : IRCDMessage
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
 		User *u = User::Find(params[0]);
+
 		if (!u)
 			return;
 
@@ -494,7 +508,7 @@ struct IRCDMessageTBurst : IRCDMessage
 		Channel *c = Channel::Find(params[1]);
 
 		if (c)
-			c->ChangeTopicInternal(setter, params[4], topic_time);
+			c->ChangeTopicInternal(NULL, setter, params[4], topic_time);
 	}
 };
 
@@ -528,7 +542,7 @@ struct IRCDMessageUID : IRCDMessage
 	IRCDMessageUID(Module *creator) : IRCDMessage(creator, "UID", 10) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
 
 	/*          0     1 2          3   4      5             6        7         8           9                   */
-	/* :0MC UID Steve 1 1350157102 +oi ~steve resolved.host 10.0.0.1 0MCAAAAAB 1350157108 :Mining all the time */
+	/* :0MC UID Steve 1 1350157102 +oi ~steve resolved.host 10.0.0.1 0MCAAAAAB Steve      :Mining all the time */
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
 		Anope::string ip = params[6];
@@ -537,11 +551,11 @@ struct IRCDMessageUID : IRCDMessage
 			ip.clear();
 
 		NickAlias *na = NULL;
-		if (params[8] != "0")
+		if (params[8] != "0" && params[8] != "*")
 			na = NickAlias::Find(params[8]);
 
 		/* Source is always the server */
-		new User(params[0], params[4], params[5], "",
+		User::OnIntroduce(params[0], params[4], params[5], "",
 				ip, source.GetServer(),
 				params[9], params[2].is_pos_number_only() ? convertTo<time_t>(params[2]) : 0,
 				params[3], params[7], na ? *na->nc : NULL);
@@ -611,29 +625,32 @@ class ProtoHybrid : public Module
 		ModeManager::AddUserMode(new UserModeOperOnly("CALLERID", 'g'));
 		ModeManager::AddUserMode(new UserMode("INVIS", 'i'));
 		ModeManager::AddUserMode(new UserModeOperOnly("LOCOPS", 'l'));
-		ModeManager::AddUserMode(new UserMode("OPER", 'o'));
+		ModeManager::AddUserMode(new UserModeOperOnly("OPER", 'o'));
+		ModeManager::AddUserMode(new UserMode("HIDECHANS", 'p'));
+		ModeManager::AddUserMode(new UserMode("HIDEIDLE", 'q'));
 		ModeManager::AddUserMode(new UserModeNoone("REGISTERED", 'r'));
 		ModeManager::AddUserMode(new UserModeOperOnly("SNOMASK", 's'));
 		ModeManager::AddUserMode(new UserMode("WALLOPS", 'w'));
-		ModeManager::AddUserMode(new UserModeOperOnly("OPERWALLS", 'z'));
+		ModeManager::AddUserMode(new UserMode("CLOAK", 'x'));
 		ModeManager::AddUserMode(new UserMode("DEAF", 'D'));
+		ModeManager::AddUserMode(new UserMode("SOFTCALLERID", 'G'));
 		ModeManager::AddUserMode(new UserModeOperOnly("HIDEOPER", 'H'));
 		ModeManager::AddUserMode(new UserMode("REGPRIV", 'R'));
 		ModeManager::AddUserMode(new UserModeNoone("SSL", 'S'));
-		ModeManager::AddUserMode(new UserMode("CLOAK", 'x'));
+		ModeManager::AddUserMode(new UserModeNoone("WEBIRC", 'W'));
 
 		/* b/e/I */
 		ModeManager::AddChannelMode(new ChannelModeList("BAN", 'b'));
 		ModeManager::AddChannelMode(new ChannelModeList("EXCEPT", 'e'));
 		ModeManager::AddChannelMode(new ChannelModeList("INVITEOVERRIDE", 'I'));
 
-		/* v/h/o/a/q */
+		/* v/h/o */
 		ModeManager::AddChannelMode(new ChannelModeStatus("VOICE", 'v', '+', 0));
 		ModeManager::AddChannelMode(new ChannelModeStatus("HALFOP", 'h', '%', 1));
 		ModeManager::AddChannelMode(new ChannelModeStatus("OP", 'o', '@', 2));
 
 		/* l/k */
-		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l'));
+		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l', true));
 		ModeManager::AddChannelMode(new ChannelModeKey('k'));
 
 		/* Add channel modes */
@@ -645,10 +662,12 @@ class ProtoHybrid : public Module
 		ModeManager::AddChannelMode(new ChannelModeNoone("REGISTERED", 'r'));
 		ModeManager::AddChannelMode(new ChannelMode("SECRET", 's'));
 		ModeManager::AddChannelMode(new ChannelMode("TOPIC", 't'));
-		ModeManager::AddChannelMode(new ChannelModeOperOnly("OPERONLY", 'O'));
+		ModeManager::AddChannelMode(new ChannelMode("NOCTCP", 'C'));
 		ModeManager::AddChannelMode(new ChannelMode("REGMODERATED", 'M'));
+		ModeManager::AddChannelMode(new ChannelModeOperOnly("OPERONLY", 'O'));
 		ModeManager::AddChannelMode(new ChannelMode("REGISTEREDONLY", 'R'));
 		ModeManager::AddChannelMode(new ChannelMode("SSL", 'S'));
+		ModeManager::AddChannelMode(new ChannelMode("NONOTICE", 'T'));
 	}
 
 public:

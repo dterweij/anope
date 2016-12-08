@@ -4,7 +4,8 @@ void IRC2SQL::OnShutdown()
 {
 	// TODO: test if we really have to use blocking query here
 	// (sometimes m_mysql get unloaded before the other thread executed all queries)
-	SQL::Result r = this->sql->RunQuery(SQL::Query("CALL " + prefix + "OnShutdown()"));
+	if (this->sql)
+		SQL::Result r = this->sql->RunQuery(SQL::Query("CALL " + prefix + "OnShutdown()"));
 	quitting = true;
 }
 
@@ -12,8 +13,7 @@ void IRC2SQL::OnReload(Configuration::Conf *conf)
 {
 	Configuration::Block *block = Config->GetModule(this);
 	prefix = block->Get<const Anope::string>("prefix", "anope_");
-	UseGeoIP = block->Get<bool>("GeoIPLookup", "no");
-	GeoIPDB = block->Get<const Anope::string>("GeoIPDatabase", "country");
+	GeoIPDB = block->Get<const Anope::string>("geoip_database");
 	ctcpuser = block->Get<bool>("ctcpuser", "no");
 	ctcpeob = block->Get<bool>("ctcpeob", "yes");
 	Anope::string engine = block->Get<const Anope::string>("engine");
@@ -96,7 +96,7 @@ void IRC2SQL::OnUserConnect(User *u, bool &exempt)
 	query.SetValue("vhost", u->vhost);
 	query.SetValue("chost", u->chost);
 	query.SetValue("realname", u->realname);
-	query.SetValue("ip", u->ip);
+	query.SetValue("ip", u->ip.addr());
 	query.SetValue("ident", u->GetIdent());
 	query.SetValue("vident", u->GetVIdent());
 	query.SetValue("secure", u->HasMode("SSL") || u->HasExt("ssl") ? "Y" : "N");
@@ -129,6 +129,15 @@ void IRC2SQL::OnUserNickChange(User *u, const Anope::string &oldnick)
 	query = "UPDATE `" + prefix + "user` SET nick=@newnick@ WHERE nick=@oldnick@";
 	query.SetValue("newnick", u->nick);
 	query.SetValue("oldnick", oldnick);
+	this->RunQuery(query);
+}
+
+void IRC2SQL::OnUserAway(User *u, const Anope::string &message)
+{
+	query = "UPDATE `" + prefix + "user` SET away=@away@, awaymsg=@awaymsg@ WHERE nick=@nick@";
+	query.SetValue("away", (!message.empty()) ? "Y" : "N");
+	query.SetValue("awaymsg", message);
+	query.SetValue("nick", u->nick);
 	this->RunQuery(query);
 }
 
@@ -187,7 +196,10 @@ void IRC2SQL::OnChannelCreate(Channel *c)
 	query.SetValue("channel", c->name);
 	query.SetValue("topic", c->topic);
 	query.SetValue("topicauthor", c->topic_setter);
-	query.SetValue("topictime", c->topic_ts);
+	if (c->topic_ts > 0)
+		query.SetValue("topictime", c->topic_ts);
+	else
+		query.SetValue("topictime", "NULL", false);
 	query.SetValue("modes", c->GetModes(true,true));
 	this->RunQuery(query);
 }
@@ -215,10 +227,32 @@ void IRC2SQL::OnJoinChannel(User *u, Channel *c)
 
 EventReturn IRC2SQL::OnChannelModeSet(Channel *c, MessageSource &setter, ChannelMode *mode, const Anope::string &param)
 {
-	query = "UPDATE `" + prefix + "chan` SET modes=@modes@ WHERE channel=@channel@";
-	query.SetValue("channel", c->name);
-	query.SetValue("modes", c->GetModes(true,true));
-	this->RunQuery(query);
+	if (mode->type == MODE_STATUS)
+	{
+		User *u = User::Find(param);
+		if (u == NULL)
+			return EVENT_CONTINUE;
+
+		ChanUserContainer *cc = u->FindChannel(c);
+		if (cc == NULL)
+			return EVENT_CONTINUE;
+
+		query = "UPDATE `" + prefix + "user` AS u, `" + prefix + "ison` AS i, `" + prefix + "chan` AS c"
+				" SET i.modes=@modes@"
+				" WHERE u.nick=@nick@ AND c.channel=@channel@"
+				" AND u.nickid = i.nickid AND c.chanid = i.chanid";
+		query.SetValue("nick", u->nick);
+		query.SetValue("modes", cc->status.Modes());
+		query.SetValue("channel", c->name);
+		this->RunQuery(query);
+	}
+	else
+	{
+		query = "UPDATE `" + prefix + "chan` SET modes=@modes@ WHERE channel=@channel@";
+		query.SetValue("channel", c->name);
+		query.SetValue("modes", c->GetModes(true,true));
+		this->RunQuery(query);
+	}
 	return EVENT_CONTINUE;
 }
 
@@ -244,7 +278,7 @@ void IRC2SQL::OnLeaveChannel(User *u, Channel *c)
 	this->RunQuery(query);
 }
 
-void IRC2SQL::OnTopicUpdated(Channel *c, const Anope::string &user, const Anope::string &topic)
+void IRC2SQL::OnTopicUpdated(User *source, Channel *c, const Anope::string &user, const Anope::string &topic)
 {
 	query = "UPDATE `" + prefix + "chan` "
 		"SET topic=@topic@, topicauthor=@author@, topictime=FROM_UNIXTIME(@time@) "

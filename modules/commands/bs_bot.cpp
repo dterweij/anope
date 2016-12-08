@@ -1,6 +1,6 @@
 /* BotServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -75,6 +75,13 @@ class CommandBSBot : public Command
 			return;
 		}
 
+		User *u = User::Find(nick, true);
+		if (u)
+		{
+			source.Reply(_("Nick \002%s\002 is currently in use."), u->nick.c_str());
+			return;
+		}
+
 		BotInfo *bi = new BotInfo(nick, user, host, real);
 
 		Log(LOG_ADMIN, source, this) << "ADD " << bi->GetMask() << " " << bi->realname;
@@ -139,7 +146,7 @@ class CommandBSBot : public Command
 		*/
 		if (nick.equals_cs(bi->nick) && (!user.empty() ? user.equals_cs(bi->GetIdent()) : 1) && (!host.empty() ? host.equals_cs(bi->host) : 1) && (!real.empty() ? real.equals_cs(bi->realname) : 1))
 		{
-			source.Reply(_("Old info is equal to the new one."));
+			source.Reply(_("The old information is the same as the new information specified."));
 			return;
 		}
 
@@ -161,10 +168,19 @@ class CommandBSBot : public Command
 			return;
 		}
 
-		if (!nick.equals_ci(bi->nick) && BotInfo::Find(nick, true))
+		if (!nick.equals_ci(bi->nick))
 		{
-			source.Reply(_("Bot \002%s\002 already exists."), nick.c_str());
-			return;
+			if (BotInfo::Find(nick, true))
+			{
+				source.Reply(_("Bot \002%s\002 already exists."), nick.c_str());
+				return;
+			}
+
+			if (User::Find(nick, true))
+			{
+				source.Reply(_("Nick \002%s\002 is currently in use."), nick.c_str());
+				return;
+			}
 		}
 
 		if (!nick.equals_ci(bi->nick))
@@ -189,7 +205,10 @@ class CommandBSBot : public Command
 		}
 
 		if (!user.empty())
+		{
 			IRCD->SendQuit(bi, "Quit: Be right back");
+			bi->introduced = false;
+		}
 		else
 			IRCD->SendNickChange(bi, nick);
 
@@ -204,18 +223,7 @@ class CommandBSBot : public Command
 			bi->realname = real;
 
 		if (!user.empty())
-		{
-			IRCD->SendClientIntroduction(bi);
-			unsigned minusers = Config->GetBlock("botserv")->Get<unsigned>("minusers");
-			const std::set<ChannelInfo *> &channels = bi->GetChannels();
-			for (std::set<ChannelInfo *>::const_iterator it = channels.begin(), it_end = channels.end(); it != it_end; ++it)
-			{
-				const ChannelInfo *ci = *it;
-
-				if (ci->c && ci->c->users.size() >= minusers)
-					bi->Join(ci->c);
-			}
-		}
+			bi->OnKill();
 
 		source.Reply(_("Bot \002%s\002 has been changed to %s!%s@%s (%s)."), oldnick.c_str(), bi->nick.c_str(), bi->GetIdent().c_str(), bi->host.c_str(), bi->realname.c_str());
 		Log(LOG_ADMIN, source, this) << "CHANGE " << oldnick << " to " << bi->GetMask() << " " << bi->realname;
@@ -349,13 +357,13 @@ class CommandBSBot : public Command
 				"hostname and realname. Since no integrity checks are done\n"
 				"for these settings, be really careful.\n"
 				" \n"
-				"\002BOT CHANGE\002 allows to change the nickname, username, hostname\n"
-				"or realname of a bot without actually having to delete it (and\n"
+				"\002BOT CHANGE\002 allows you to change the nickname, username, hostname\n"
+				"or realname of a bot without deleting it (and\n"
 				"all the data associated with it).\n"
 				" \n"
 				"\002BOT DEL\002 removes the given bot from the bot list.\n"
 				" \n"
-				"\002Note\002: you cannot create a bot that has a nick that is\n"
+				"\002Note\002: You cannot create a bot with a nick that is\n"
 				"currently registered. If an unregistered user is currently\n"
 				"using the nick, they will be killed."));
 		return true;

@@ -1,6 +1,6 @@
 /* MemoServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -254,7 +254,7 @@ class CommandMSSet : public Command
 					"               on or when you unset /AWAY.\n"
 					"    NEW     You will only be notified of memos when they\n"
 					"               are sent to you.\n"
-					"    MAIL    You will be notified of memos by email aswell as\n"
+					"    MAIL    You will be notified of memos by email as well as\n"
 					"               any other settings you have.\n"
 					"    NOMAIL  You will not be notified of memos by email.\n"
 					"    OFF     You will not receive any notification of memos.\n"

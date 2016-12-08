@@ -1,7 +1,7 @@
 Anope -- a set of IRC services for IRC networks
 -----------------------------------------------
 
-Anope is          2003-2014 Anope Team    <team@anope.org>.
+Anope is          2003-2016 Anope Team    <team@anope.org>.
 Based on Epona    2000-2002 PegSoft       <epona@pegsoft.net>.
 Based on Services 1996-1999 Andrew Church <achurch@achurch.org>.
 
@@ -107,7 +107,7 @@ Table of Contents
 
     Anope Translations:
 
-        * Robby <robby@chat.be> (nl_NL)
+        * Robby <robby@chatbelgie.be> (nl_NL)
         * Kein <kein-of@yandex.ru> (ru_RU)
         * Maik Funke <Han@mefalcon.org> (de_DE)
         * Isaac Fontal <i_fontal@hotmail.com> (es_ES)
@@ -175,7 +175,7 @@ Table of Contents
         * ngIRCd 19.2 or later
         * Plexus 3 or later
         * Ratbox 2.0.6 or later
-        * UnrealIRCd 3.2 or later
+        * UnrealIRCd 3.2 or 4
 
     Anope could also work with some of the daemons derived by the ones listed
     above, but there's no support for them if they work or don't work.

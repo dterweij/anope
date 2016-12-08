@@ -1,6 +1,6 @@
 /* Include file for high-level encryption routines.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,7 +10,7 @@
  */
 
 #include "module.h"
-#include "encryption.h"
+#include "modules/encryption.h"
 
 static ServiceReference<Encryption::Provider> md5("Encryption::Provider", "md5");
 
@@ -45,7 +45,7 @@ class EOld : public Module
 		oldmd5provider(this)
 	{
 
-		ModuleManager::LoadModule("enc_md5", User::Find(creator));
+		ModuleManager::LoadModule("enc_md5", User::Find(creator, true));
 		if (!md5)
 			throw ModuleException("Unable to find md5 reference");
 

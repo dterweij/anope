@@ -1,6 +1,6 @@
 /* Unreal IRCD 3.2.x functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -11,8 +11,7 @@
 
 #include "module.h"
 #include "modules/cs_mode.h"
-
-static bool sasl = true;
+#include "modules/sasl.h"
 
 class UnrealIRCdProto : public IRCDProto
 {
@@ -168,7 +167,7 @@ class UnrealIRCdProto : public IRCDProto
 			if (uc != NULL)
 				uc->status.Clear();
 
-			BotInfo *setter = BotInfo::Find(user->nick);
+			BotInfo *setter = BotInfo::Find(user->GetUID());
 			for (size_t i = 0; i < cs.Modes().length(); ++i)
 				c->SetMode(setter, ModeManager::FindChannelModeByChar(cs.Modes()[i]), user->GetUID(), false);
 
@@ -344,13 +343,11 @@ class UnrealIRCdProto : public IRCDProto
 		return mask.length() >= 4 && mask[0] == '~' && mask[2] == ':';
 	}
 
-	void SendLogin(User *u) anope_override
+	void SendLogin(User *u, NickAlias *na) anope_override
 	{
-		if (!u->Account())
-			return;
-
-		if (Servers::Capab.count("ESVID") > 0)
-			IRCD->SendMode(Config->GetClient("NickServ"), u, "+d %s", u->Account()->display.c_str());
+		/* 3.2.10.4+ treats users logged in with accounts as fully registered, even if -r, so we can not set this here. Just use the timestamp. */
+		if (Servers::Capab.count("ESVID") > 0 && !na->nc->HasExt("UNCONFIRMED"))
+			IRCD->SendMode(Config->GetClient("NickServ"), u, "+d %s", na->nc->display.c_str());
 		else
 			IRCD->SendMode(Config->GetClient("NickServ"), u, "+d %d", u->signon);
 	}
@@ -380,6 +377,23 @@ class UnrealIRCdProto : public IRCDProto
 		}
 	}
 
+	void SendSASLMessage(const SASL::Message &message) anope_override
+	{
+		size_t p = message.target.find('!');
+		if (p == Anope::string::npos)
+			return;
+
+		UplinkSocket::Message(BotInfo::Find(message.source)) << "SASL " << message.target.substr(0, p) << " " << message.target << " " << message.type << " " << message.data << (message.ext.empty() ? "" : " " + message.ext);
+	}
+
+	void SendSVSLogin(const Anope::string &uid, const Anope::string &acc, const Anope::string &vident, const Anope::string &vhost) anope_override
+	{
+		size_t p = uid.find('!');
+		if (p == Anope::string::npos)
+			return;
+		UplinkSocket::Message(Me) << "SVSLOGIN " << uid.substr(0, p) << " " << uid << " " << acc;
+	}
+
 	bool IsIdentValid(const Anope::string &ident) anope_override
 	{
 		if (ident.empty() || ident.length() > Config->GetBlock("networkinfo")->Get<unsigned>("userlen"))
@@ -402,17 +416,44 @@ class UnrealIRCdProto : public IRCDProto
 	}
 };
 
-class UnrealExtBan : public ChannelModeList
+class UnrealExtBan : public ChannelModeVirtual<ChannelModeList>
 {
+	char ext;
+
  public:
-	UnrealExtBan(const Anope::string &mname, char modeChar) : ChannelModeList(mname, modeChar) { }
-
-	bool Matches(User *u, const Entry *e) anope_override
+	UnrealExtBan(const Anope::string &mname, const Anope::string &basename, char extban) : ChannelModeVirtual<ChannelModeList>(mname, basename)
+		, ext(extban)
 	{
-		const Anope::string &mask = e->GetMask();
+	}
 
-		if (mask.find("~c:") == 0)
+	ChannelMode *Wrap(Anope::string &param) anope_override
+	{
+		param = "~" + Anope::string(ext) + ":" + param;
+		return ChannelModeVirtual<ChannelModeList>::Wrap(param);
+	}
+
+	ChannelMode *Unwrap(ChannelMode *cm, Anope::string &param) anope_override
+	{
+		if (cm->type != MODE_LIST || param.length() < 4 || param[0] != '~' || param[1] != ext || param[2] != ':')
+			return cm;
+
+		param = param.substr(3);
+		return this;
+	}
+};
+
+namespace UnrealExtban
+{
+	class ChannelMatcher : public UnrealExtBan
+	{
+	 public:
+		ChannelMatcher(const Anope::string &mname, const Anope::string &mbase, char c) : UnrealExtBan(mname, mbase, c)
 		{
+		}
+
+		bool Matches(User *u, const Entry *e) anope_override
+		{
+			const Anope::string &mask = e->GetMask();
 			Anope::string channel = mask.substr(3);
 
 			ChannelMode *cm = NULL;
@@ -433,38 +474,73 @@ class UnrealExtBan : public ChannelModeList
 					if (cm == NULL || uc->status.HasMode(cm->mchar))
 						return true;
 			}
+
+			return false;
 		}
-		else if (mask.find("~j:") == 0 || mask.find("~n:") == 0 || mask.find("~q:") == 0)
+	};
+
+	class EntryMatcher : public UnrealExtBan
+	{
+	 public:
+	 	EntryMatcher(const Anope::string &mname, const Anope::string &mbase, char c) : UnrealExtBan(mname, mbase, c)
+	 	{
+	 	}
+
+	 	bool Matches(User *u, const Entry *e) anope_override
 		{
+			const Anope::string &mask = e->GetMask();
 			Anope::string real_mask = mask.substr(3);
 
-			Entry en(this->name, real_mask);
-			if (en.Matches(u))
-				return true;
+			return Entry(this->name, real_mask).Matches(u);
 		}
-		else if (mask.find("~r:") == 0)
+	};
+
+	class RealnameMatcher : public UnrealExtBan
+	{
+	 public:
+	 	RealnameMatcher(const Anope::string &mname, const Anope::string &mbase, char c) : UnrealExtBan(mname, mbase, c)
+	 	{
+	 	}
+
+	 	bool Matches(User *u, const Entry *e) anope_override
 		{
+			const Anope::string &mask = e->GetMask();
 			Anope::string real_mask = mask.substr(3);
 
-			if (Anope::Match(u->realname, real_mask))
-				return true;
+			return Anope::Match(u->realname, real_mask);
 		}
-		else if (mask.find("~R:") == 0)
+	};
+
+	class RegisteredMatcher : public UnrealExtBan
+	{
+	 public:
+	 	RegisteredMatcher(const Anope::string &mname, const Anope::string &mbase, char c) : UnrealExtBan(mname, mbase, c)
+	 	{
+	 	}
+
+	 	bool Matches(User *u, const Entry *e) anope_override
 		{
-			if (u->HasMode("REGISTERED") && mask.equals_ci(u->nick))
-				return true;
+			const Anope::string &mask = e->GetMask();
+			return u->HasMode("REGISTERED") && mask.equals_ci(u->nick);
 		}
-		else if (mask.find("~a:") == 0)
-		{
+	};
+
+	class AccountMatcher : public UnrealExtBan
+	{
+	 public:
+	 	AccountMatcher(const Anope::string &mname, const Anope::string &mbase, char c) : UnrealExtBan(mname, mbase, c)
+	 	{
+	 	}
+
+	 	bool Matches(User *u, const Entry *e) anope_override
+	 	{
+	 		const Anope::string &mask = e->GetMask();
 			Anope::string real_mask = mask.substr(3);
 
-			if (u->Account() && Anope::Match(u->Account()->display, real_mask))
-				return true;
-		}
-	
-		return false;
-	}
-};
+	 		return u->Account() && Anope::Match(u->Account()->display, real_mask);
+	 	}
+	};
+}
 
 class ChannelModeFlood : public ChannelModeParam
 {
@@ -472,7 +548,7 @@ class ChannelModeFlood : public ChannelModeParam
 	ChannelModeFlood(char modeChar, bool minusNoArg) : ChannelModeParam("FLOOD", modeChar, minusNoArg) { }
 
 	/* Borrowed part of this check from UnrealIRCd */
-	bool IsValid(const Anope::string &value) const anope_override
+	bool IsValid(Anope::string &value) const anope_override
 	{
 		if (value.empty())
 			return false;
@@ -500,7 +576,7 @@ class ChannelModeFlood : public ChannelModeParam
 			while (p < arg.length() && isdigit(arg[p]))
 				++p;
 			if (p == arg.length() || !(arg[p] == 'c' || arg[p] == 'j' || arg[p] == 'k' || arg[p] == 'm' || arg[p] == 'n' || arg[p] == 't'))
-				continue; /* continue instead of break for forward compatability. */
+				continue; /* continue instead of break for forward compatibility. */
 			try
 			{
 				int v = arg.substr(0, p).is_number_only() ? convertTo<int>(arg.substr(0, p)) : 0;
@@ -552,13 +628,21 @@ struct IRCDMessageCapab : Message::Capab
 					switch (modebuf[t])
 					{
 						case 'b':
-							ModeManager::AddChannelMode(new UnrealExtBan("BAN", 'b'));
+							ModeManager::AddChannelMode(new ChannelModeList("BAN", 'b'));
+
+							ModeManager::AddChannelMode(new UnrealExtban::ChannelMatcher("CHANNELBAN", "BAN", 'c'));
+							ModeManager::AddChannelMode(new UnrealExtban::EntryMatcher("JOINBAN", "BAN", 'j'));
+							ModeManager::AddChannelMode(new UnrealExtban::EntryMatcher("NONICKBAN", "BAN", 'n'));
+							ModeManager::AddChannelMode(new UnrealExtban::EntryMatcher("QUIET", "BAN", 'q'));
+							ModeManager::AddChannelMode(new UnrealExtban::RealnameMatcher("REALNAMEBAN", "BAN", 'r'));
+							ModeManager::AddChannelMode(new UnrealExtban::RegisteredMatcher("REGISTEREDBAN", "BAN", 'R'));
+							ModeManager::AddChannelMode(new UnrealExtban::AccountMatcher("ACCOUNTBAN", "BAN", 'a'));
 							continue;
 						case 'e':
-							ModeManager::AddChannelMode(new UnrealExtBan("EXCEPT", 'e'));
+							ModeManager::AddChannelMode(new ChannelModeList("EXCEPT", 'e'));
 							continue;
 						case 'I':
-							ModeManager::AddChannelMode(new UnrealExtBan("INVITEOVERRIDE", 'I'));
+							ModeManager::AddChannelMode(new ChannelModeList("INVITEOVERRIDE", 'I'));
 							continue;
 						default:
 							ModeManager::AddChannelMode(new ChannelModeList("", modebuf[t]));
@@ -824,7 +908,7 @@ struct IRCDMessageNick : IRCDMessage
 			Server *s = Server::Find(params[5]);
 			if (s == NULL)
 			{
-				Log(LOG_DEBUG) << "User " << params[0] << " introduced from nonexistant server " << params[5] << "?";
+				Log(LOG_DEBUG) << "User " << params[0] << " introduced from non-existent server " << params[5] << "?";
 				return;
 			}
 		
@@ -842,10 +926,14 @@ struct IRCDMessageNick : IRCDMessage
 				na = NickAlias::Find(params[6]);
 			}
 
-			new User(params[0], params[3], params[4], vhost, ip, s, params[10], user_ts, params[7], "", na ? *na->nc : NULL);
+			User::OnIntroduce(params[0], params[3], params[4], vhost, ip, s, params[10], user_ts, params[7], "", na ? *na->nc : NULL);
 		}
 		else
-			source.GetUser()->ChangeNick(params[0]);
+		{
+			User *u = source.GetUser();
+			if (u)
+				u->ChangeNick(params[0]);
+		}
 	}
 };
 
@@ -871,80 +959,22 @@ struct IRCDMessagePong : IRCDMessage
 
 struct IRCDMessageSASL : IRCDMessage
 {
-	class UnrealSASLIdentifyRequest : public IdentifyRequest
-	{
-		Anope::string uid;
+	IRCDMessageSASL(Module *creator) : IRCDMessage(creator, "SASL", 4) { SetFlag(IRCDMESSAGE_SOFT_LIMIT); SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
 
-	 public:
-		UnrealSASLIdentifyRequest(Module *m, const Anope::string &id, const Anope::string &acc, const Anope::string &pass) : IdentifyRequest(m, acc, pass), uid(id) { }
-
-		void OnSuccess() anope_override
-		{
-			size_t p = this->uid.find('!');
-			if (p == Anope::string::npos)
-				return;
-
-			UplinkSocket::Message(Me) << "SVSLOGIN " << this->uid.substr(0, p) << " " << this->uid << " " << this->GetAccount();
-			UplinkSocket::Message() << "SASL " << this->uid.substr(0, p) << " " << this->uid << " D S";
-		}
-
-		void OnFail() anope_override
-		{
-			size_t p = this->uid.find('!');
-			if (p == Anope::string::npos)
-				return;
-
-			UplinkSocket::Message() << "SASL " << this->uid.substr(0, p) << " " << this->uid << " D F";
-
-			Log(Config->GetClient("NickServ")) << "A user failed to identify for account " << this->GetAccount() << " using SASL";
-		}
-	};
-	
-	IRCDMessageSASL(Module *creator) : IRCDMessage(creator, "SASL", 4) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
-
-	/* Received: :irc.foonet.com SASL services.localhost.net irc.foonet.com!1.57290 S PLAIN
-	 *                                                       uid
-	 *
-	 * Received: :irc.foonet.com SASL services.localhost.net irc.foonet.com!3.56270 C QWRhbQBBZGFtAHF3ZXJ0eQ==
-	 *                                                       uid                      base64(account\0account\0pass)
-	 */
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
 		size_t p = params[1].find('!');
-		if (!sasl || p == Anope::string::npos)	
+		if (!SASL::sasl || p == Anope::string::npos)	
 			return;
 
-		if (params[2] == "S")
-		{
-			if (params[3] == "PLAIN")
-				UplinkSocket::Message() << "SASL " << params[1].substr(0, p) << " " << params[1] << " C +";
-			else
-				UplinkSocket::Message() << "SASL " << params[1].substr(0, p) << " " << params[1] << " D F";
-		}
-		else if (params[2] == "C")
-		{
-			Anope::string decoded;
-			Anope::B64Decode(params[3], decoded);
+		SASL::Message m;
+		m.source = params[1];
+		m.target = params[0];
+		m.type = params[2];
+		m.data = params[3];
+		m.ext = params.size() > 4 ? params[4] : "";
 
-			p = decoded.find('\0');
-			if (p == Anope::string::npos)
-				return;
-			decoded = decoded.substr(p + 1);
-
-			p = decoded.find('\0');
-			if (p == Anope::string::npos)
-				return;
-
-			Anope::string acc = decoded.substr(0, p),
-				pass = decoded.substr(p + 1);
-
-			if (acc.empty() || pass.empty())
-				return;
-
-			IdentifyRequest *req = new UnrealSASLIdentifyRequest(this->owner, params[1], acc, pass);
-			FOREACH_MOD(OnCheckAuthentication, (NULL, req));
-			req->Dispatch();
-		}
+		SASL::sasl->ProcessMessage(m);
 	}
 };
 
@@ -966,7 +996,7 @@ struct IRCDMessageSetHost : IRCDMessage
 	{
 		User *u = source.GetUser();
 
-		/* When a user sets +x we recieve the new host and then the mode change */
+		/* When a user sets +x we receive the new host and then the mode change */
 		if (u->HasMode("CLOAK"))
 			u->SetDisplayedHost(params[0]);
 		else
@@ -987,13 +1017,12 @@ struct IRCDMessageSetIdent : IRCDMessage
 
 struct IRCDMessageSetName : IRCDMessage
 {
-	IRCDMessageSetName(Module *creator) : IRCDMessage(creator, "SETNAME", 1) { }
+	IRCDMessageSetName(Module *creator) : IRCDMessage(creator, "SETNAME", 1) { SetFlag(IRCDMESSAGE_REQUIRE_USER); }
 
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		User *u = User::Find(params[0]);
-		if (u)
-			u->SetRealname(params[1]);
+		User *u = source.GetUser();
+		u->SetRealname(params[0]);
 	}
 };
 
@@ -1071,7 +1100,7 @@ struct IRCDMessageSJoin : IRCDMessage
 				sju.second = User::Find(buf);
 				if (!sju.second)
 				{
-					Log(LOG_DEBUG) << "SJOIN for nonexistant user " << buf << " on " << params[1];
+					Log(LOG_DEBUG) << "SJOIN for non-existent user " << buf << " on " << params[1];
 					continue;
 				}
 
@@ -1121,7 +1150,7 @@ struct IRCDMessageTopic : IRCDMessage
 	{
 		Channel *c = Channel::Find(params[0]);
 		if (c)
-			c->ChangeTopicInternal(params[1], params[3], Anope::string(params[2]).is_pos_number_only() ? convertTo<time_t>(params[2]) : Anope::CurTime);
+			c->ChangeTopicInternal(source.GetUser(), params[1], params[3], Anope::string(params[2]).is_pos_number_only() ? convertTo<time_t>(params[2]) : Anope::CurTime);
 	}
 };
 
@@ -1146,7 +1175,7 @@ class ProtoUnreal : public Module
 	Message::Invite message_invite;
 	Message::Join message_join;
 	Message::Kick message_kick;
-	Message::Kill message_kill;
+	Message::Kill message_kill, message_svskill;
 	Message::MOTD message_motd;
 	Message::Notice message_notice;
 	Message::Part message_part;
@@ -1195,7 +1224,7 @@ class ProtoUnreal : public Module
 		ModeManager::AddUserMode(new UserModeOperOnly("CO_ADMIN", 'C'));
 		ModeManager::AddUserMode(new UserMode("CENSOR", 'G'));
 		ModeManager::AddUserMode(new UserModeOperOnly("HIDEOPER", 'H'));
-		ModeManager::AddUserMode(new UserMode("HIDEIDLE", 'I'));
+		ModeManager::AddUserMode(new UserModeOperOnly("HIDEIDLE", 'I'));
 		ModeManager::AddUserMode(new UserModeOperOnly("NETADMIN", 'N'));
 		ModeManager::AddUserMode(new UserMode("REGPRIV", 'R'));
 		ModeManager::AddUserMode(new UserModeOperOnly("PROTECTED", 'S'));
@@ -1222,7 +1251,7 @@ class ProtoUnreal : public Module
 	ProtoUnreal(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, PROTOCOL | VENDOR),
 		ircd_proto(this),
 		message_away(this), message_error(this), message_invite(this), message_join(this), message_kick(this),
-		message_kill(this), message_motd(this), message_notice(this), message_part(this), message_ping(this),
+		message_kill(this), message_svskill(this, "SVSKILL"), message_motd(this), message_notice(this), message_part(this), message_ping(this),
 		message_privmsg(this), message_quit(this), message_squit(this), message_stats(this), message_time(this),
 		message_version(this), message_whois(this),
 
@@ -1233,14 +1262,16 @@ class ProtoUnreal : public Module
 	{
 
 		this->AddModes();
+	}
 
+	void Prioritize() anope_override
+	{
 		ModuleManager::SetPriority(this, PRIORITY_FIRST);
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
 		use_server_side_mlock = conf->GetModule(this)->Get<bool>("use_server_side_mlock");
-		sasl = conf->GetModule(this)->Get<bool>("sasl");
 	}
 
 	void OnUserNickChange(User *u, const Anope::string &) anope_override

@@ -1,10 +1,9 @@
 /*
  *
- * (C) 2008-2014 Anope Team
+ * (C) 2008-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #ifndef REGCHANNEL_H
@@ -133,8 +132,8 @@ class CoreExport ChannelInfo : public Serializable, public Extensible
 	/** Retrieve the access for a user or group in the form of a vector of access entries
 	 * (as multiple entries can affect a single user).
 	 */
-	AccessGroup AccessFor(const User *u);
-	AccessGroup AccessFor(const NickCore *nc);
+	AccessGroup AccessFor(const User *u, bool updateLastUsed = true);
+	AccessGroup AccessFor(const NickCore *nc, bool updateLastUsed = true);
 
 	/** Get the size of the accss vector for this channel
 	 * @return The access vector size
@@ -197,6 +196,11 @@ class CoreExport ChannelInfo : public Serializable, public Extensible
 	/** Clear the whole akick list
 	 */
 	void ClearAkick();
+
+	/** Get the level entries for the channel.
+	 * @return The levels for the channel.
+	 */
+	const Anope::map<int16_t> &GetLevelEntries();
 
 	/** Get the level for a privilege
 	 * @param priv The privilege name

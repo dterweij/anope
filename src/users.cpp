@@ -1,15 +1,13 @@
 /* Routines to maintain a list of online users.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
-
 
 #include "services.h"
 #include "modules.h"
@@ -33,7 +31,7 @@ time_t MaxUserTime = 0;
 
 std::list<User *> User::quitting_users;
 
-User::User(const Anope::string &snick, const Anope::string &sident, const Anope::string &shost, const Anope::string &svhost, const Anope::string &sip, Server *sserver, const Anope::string &srealname, time_t ssignon, const Anope::string &smodes, const Anope::string &suid, NickCore *account)
+User::User(const Anope::string &snick, const Anope::string &sident, const Anope::string &shost, const Anope::string &svhost, const Anope::string &uip, Server *sserver, const Anope::string &srealname, time_t ts, const Anope::string &smodes, const Anope::string &suid, NickCore *account) : ip(uip)
 {
 	if (snick.empty() || sident.empty() || shost.empty())
 		throw CoreException("Bad args passed to User::User");
@@ -49,10 +47,9 @@ User::User(const Anope::string &snick, const Anope::string &sident, const Anope:
 	this->host = shost;
 	this->vhost = svhost;
 	this->chost = svhost;
-	this->ip = sip;
 	this->server = sserver;
 	this->realname = srealname;
-	this->timestamp = this->signon = ssignon;
+	this->timestamp = this->signon = ts;
 	this->SetModesInternal(sserver, "%s", smodes.c_str());
 	this->uid = suid;
 	this->super_admin = false;
@@ -68,10 +65,11 @@ User::User(const Anope::string &snick, const Anope::string &sident, const Anope:
 	this->Login(account);
 	this->UpdateHost();
 
-	if (sserver && sserver->IsSynced()) // Our bots are introduced on startup with no server
+	if (sserver) // Our bots are introduced on startup with no server
 	{
 		++sserver->users;
-		Log(this, "connect") << (!vhost.empty() && vhost != host ? "(" + vhost + ") " : "") << "(" << srealname << ") " << (!sip.empty() && sip != host ? "[" + sip + "] " : "") << "connected to the network (" << sserver->GetName() << ")";
+		if (server->IsSynced())
+			Log(this, "connect") << (!vhost.empty() && vhost != host ? "(" + vhost + ") " : "") << "(" << srealname << ") " << (!uip.empty() && uip != host ? "[" + uip + "] " : "") << "connected to the network (" << sserver->GetName() << ")";
 	}
 
 	if (UserListByNick.size() > MaxUserCount)
@@ -86,6 +84,56 @@ User::User(const Anope::string &snick, const Anope::string &sident, const Anope:
 	if (server && server->IsULined())
 		exempt = true;
 	FOREACH_MOD(OnUserConnect, (this, exempt));
+}
+
+static void CollideKill(User *target, const Anope::string &reason)
+{
+	if (target->server != Me)
+		target->Kill(Me, reason);
+	else
+	{
+		// Be sure my user is really dead
+		IRCD->SendQuit(target, "%s", reason.c_str());
+
+		// Reintroduce my client
+		if (BotInfo *bi = dynamic_cast<BotInfo *>(target))
+			bi->OnKill();
+		else
+			target->Quit(reason);
+	}
+}
+
+static void Collide(User *u, const Anope::string &id, const Anope::string &type)
+{
+	// Kill incoming user
+	IRCD->SendKill(Me, id, type);
+	// Quit colliding user
+	CollideKill(u, type);
+}
+
+User* User::OnIntroduce(const Anope::string &snick, const Anope::string &sident, const Anope::string &shost, const Anope::string &svhost, const Anope::string &sip, Server *sserver, const Anope::string &srealname, time_t ts, const Anope::string &smodes, const Anope::string &suid, NickCore *nc)
+{
+	// How IRCds handle collisions varies a lot, for safety well just always kill both sides
+	// With properly set qlines, this can almost never happen anyway
+
+	User *u = User::Find(snick, true);
+	if (u)
+	{
+		Collide(u, !suid.empty() ? suid : snick, "Nick collision");
+		return NULL;
+	}
+
+	if (!suid.empty())
+	{
+		u = User::Find(suid);
+		if (u)
+		{
+			Collide(u, suid, "ID collision");
+			return NULL;
+		}
+	}
+
+	return new User(snick, sident, shost, svhost, sip, sserver, srealname, ts, smodes, suid, nc);
 }
 
 void User::ChangeNick(const Anope::string &newnick, time_t ts)
@@ -109,8 +157,17 @@ void User::ChangeNick(const Anope::string &newnick, time_t ts)
 			old_na->last_seen = Anope::CurTime;
 		
 		UserListByNick.erase(this->nick);
+
 		this->nick = newnick;
-		UserListByNick[this->nick] = this;
+
+		User* &other = UserListByNick[this->nick];
+		if (other)
+		{
+			CollideKill(this, "Nick collision");
+			CollideKill(other, "Nick collision");
+			return;
+		}
+		other = this;
 
 		on_access = false;
 		NickAlias *na = NickAlias::Find(this->nick);
@@ -233,6 +290,8 @@ void User::SetRealname(const Anope::string &srealname)
 
 User::~User()
 {
+	UnsetExtensibles();
+
 	if (this->server != NULL)
 	{
 		if (this->server->IsSynced())
@@ -303,9 +362,9 @@ void User::Identify(NickAlias *na)
 		na->last_seen = Anope::CurTime;
 	}
 
-	this->Login(na->nc);
+	IRCD->SendLogin(this, na);
 
-	IRCD->SendLogin(this);
+	this->Login(na->nc);
 
 	FOREACH_MOD(OnNickIdentify, (this));
 
@@ -448,6 +507,8 @@ void User::UpdateHost()
 		Anope::string last_realhost = this->GetIdent() + "@" + this->host;
 		na->last_usermask = last_usermask;
 		na->last_realhost = last_realhost;
+		// This is called on signon, and if users are introduced with an account it won't update
+		na->last_realname = this->realname;
 	}
 }
 
@@ -464,7 +525,27 @@ void User::SetModeInternal(const MessageSource &source, UserMode *um, const Anop
 	this->modes[um->name] = param;
 
 	if (um->name == "OPER")
+	{
 		++OperCount;
+
+		if (this->IsServicesOper())
+		{
+			if (!this->nc->o->ot->modes.empty())
+			{
+				this->SetModes(NULL, "%s", this->nc->o->ot->modes.c_str());
+				this->SendMessage(NULL, "Changing your usermodes to \002%s\002", this->nc->o->ot->modes.c_str());
+				UserMode *oper = ModeManager::FindUserModeByName("OPER");
+				if (oper && !this->HasMode("OPER") && this->nc->o->ot->modes.find(oper->mchar) != Anope::string::npos)
+					IRCD->SendOper(this);
+			}
+			if (IRCD->CanSetVHost && !this->nc->o->vhost.empty())
+			{
+				this->SendMessage(NULL, "Changing your vhost to \002%s\002", this->nc->o->vhost.c_str());
+ 				this->SetDisplayedHost(this->nc->o->vhost);
+				IRCD->SendVhost(this, "", this->nc->o->vhost);
+			}
+		}
+	}
 
 	if (um->name == "CLOAK" || um->name == "VHOST")
 		this->UpdateHost();
@@ -642,12 +723,9 @@ ChanUserContainer *User::FindChannel(Channel *c) const
 	return NULL;
 }
 
-bool User::IsProtected() const
+bool User::IsProtected()
 {
-	if (this->HasMode("PROTECTED") || this->HasMode("GOD"))
-		return true;
-
-	return false;
+	return this->HasMode("PROTECTED") || this->HasMode("GOD") || this->HasPriv("protected") || (this->server && this->server->IsULined());
 }
 
 void User::Kill(const MessageSource &source, const Anope::string &reason)
@@ -729,7 +807,7 @@ bool User::BadPassword()
 	this->invalid_pw_time = Anope::CurTime;
 	if (this->invalid_pw_count >= Config->GetBlock("options")->Get<int>("badpasslimit"))
 	{
-		this->Kill(Me->GetName(), "Too many invalid passwords");
+		this->Kill(Me, "Too many invalid passwords");
 		return true;
 	}
 
@@ -738,18 +816,19 @@ bool User::BadPassword()
 
 User* User::Find(const Anope::string &name, bool nick_only)
 {
-	if (!nick_only && isdigit(name[0]) && IRCD->RequiresID)
+	if (!nick_only && IRCD && IRCD->RequiresID)
 	{
 		user_map::iterator it = UserListByUID.find(name);
 		if (it != UserListByUID.end())
 			return it->second;
+
+		if (IRCD->AmbiguousID)
+			return NULL;
 	}
-	else
-	{
-		user_map::iterator it = UserListByNick.find(name);
-		if (it != UserListByNick.end())
-			return it->second;
-	}
+
+	user_map::iterator it = UserListByNick.find(name);
+	if (it != UserListByNick.end())
+		return it->second;
 
 	return NULL;
 }

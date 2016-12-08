@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -144,6 +144,7 @@ class CommandOSSXLineBase : public Command
 					entry["By"] = x->by;
 					entry["Created"] = Anope::strftime(x->created, NULL, true);
 					entry["Expires"] = Anope::Expires(x->expires, source.nc);
+					entry["ID"] = x->id;
 					entry["Reason"] = x->reason;
 					list.AddEntry(entry);
 				}
@@ -165,6 +166,7 @@ class CommandOSSXLineBase : public Command
 					entry["By"] = x->by;
 					entry["Created"] = Anope::strftime(x->created, NULL, true);
 					entry["Expires"] = Anope::Expires(x->expires, source.nc);
+					entry["ID"] = x->id;
 					entry["Reason"] = x->reason;
 					list.AddEntry(entry);
 				}
@@ -196,7 +198,11 @@ class CommandOSSXLineBase : public Command
 	void OnView(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		ListFormatter list(source.GetAccount());
-		list.AddColumn(_("Number")).AddColumn(_("Mask")).AddColumn(_("By")).AddColumn(_("Created")).AddColumn(_("Expires")).AddColumn(_("Reason"));
+		list.AddColumn(_("Number")).AddColumn(_("Mask")).AddColumn(_("By")).AddColumn(_("Created")).AddColumn(_("Expires"));
+		if (Config->GetModule("operserv")->Get<bool>("akillids"))
+			list.AddColumn(_("ID"));
+		list.AddColumn(_("Reason"));
+
 		this->ProcessList(source, params, list);
 	}
 
@@ -351,16 +357,14 @@ class CommandOSSNLine : public CommandOSSXLineBase
 		if (mask[masklen - 1] == ' ')
 			mask.erase(masklen - 1);
 
-		if (!this->xlm()->CanAdd(source, mask, expires, reason))
-			return;
-		else if (mask.find_first_not_of("/.*?") == Anope::string::npos)
+		if (Config->GetModule("operserv")->Get<bool>("addakiller", "yes") && !source.GetNick().empty())
+			reason = "[" + source.GetNick() + "] " + reason;
+
+		if (mask.find_first_not_of("/.*?") == Anope::string::npos)
 		{
 			source.Reply(USERHOST_MASK_TOO_WIDE, mask.c_str());
 			return;
 		}
-
-		if (Config->GetModule("operserv")->Get<bool>("addakiller", "yes") && !source.GetNick().empty())
-			reason = "[" + source.GetNick() + "] " + reason;
 
 		XLine *x = new XLine(mask, source.GetNick(), expires, reason);
 		if (Config->GetModule("operserv")->Get<bool>("akillids"))
@@ -379,6 +383,9 @@ class CommandOSSNLine : public CommandOSSXLineBase
 			delete x;
 			return;
 		}
+
+		if (!this->xlm()->CanAdd(source, mask, expires, reason))
+			return;
 
 		EventReturn MOD_RESULT;
 		FOREACH_RESULT(OnAddXLine, MOD_RESULT, (source, x, this->xlm()));
@@ -399,7 +406,7 @@ class CommandOSSNLine : public CommandOSSXLineBase
 				User *user = it->second;
 
 				if (!user->HasMode("OPER") && user->server != Me && this->xlm()->Check(user, x))
-					user->Kill(Me->GetName(), rreason);
+					user->Kill(Me, rreason);
 			}
 
 			this->xlm()->Send(NULL, x);
@@ -558,16 +565,14 @@ class CommandOSSQLine : public CommandOSSXLineBase
 			}
 		}
 
-		if (!this->sqlines->CanAdd(source, mask, expires, reason))
-			return;
-		else if (mask.find_first_not_of("./?*") == Anope::string::npos)
+		if (Config->GetModule("operserv")->Get<bool>("addakiller", "yes") && !source.GetNick().empty())
+			reason = "[" + source.GetNick() + "] " + reason;
+
+		if (mask.find_first_not_of("./?*") == Anope::string::npos)
 		{
 			source.Reply(USERHOST_MASK_TOO_WIDE, mask.c_str());
 			return;
 		}
-
-		if (Config->GetModule("operserv")->Get<bool>("addakiller", "yes") && !source.GetNick().empty())
-			reason = "[" + source.GetNick() + "] " + reason;
 
 		XLine *x = new XLine(mask, source.GetNick(), expires, reason);
 		if (Config->GetModule("operserv")->Get<bool>("akillids"))
@@ -586,6 +591,9 @@ class CommandOSSQLine : public CommandOSSXLineBase
 			delete x;
 			return;
 		}
+
+		if (!this->sqlines->CanAdd(source, mask, expires, reason))
+			return;
 
 		EventReturn MOD_RESULT;
 		FOREACH_RESULT(OnAddXLine, MOD_RESULT, (source, x, this->xlm()));
@@ -631,7 +639,7 @@ class CommandOSSQLine : public CommandOSSXLineBase
 					User *user = it->second;
 
 					if (!user->HasMode("OPER") && user->server != Me && this->xlm()->Check(user, x))
-						user->Kill(Me->GetName(), rreason);
+						user->Kill(Me, rreason);
 				}
 			}
 
@@ -664,7 +672,9 @@ class CommandOSSQLine : public CommandOSSXLineBase
 				"connect, Services will not allow it to pursue his IRC\n"
 				"session.\n"
 				"If the first character of the mask is #, services will\n"
-				"prevent the use of matching channels."));
+				"prevent the use of matching channels. If the mask is a\n"
+				"regular expression, the expression will be matched against\n"
+				"channels too."));
 		source.Reply(_(" \n"
 				"\002SQLINE ADD\002 adds the given (nick's) mask to the SQLINE\n"
 				"list for the given reason (which \002must\002 be given).\n"

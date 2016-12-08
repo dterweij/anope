@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -38,6 +37,8 @@ NickCore::NickCore(const Anope::string &coredisplay) : Serializable("NickCore"),
 
 NickCore::~NickCore()
 {
+	UnsetExtensibles();
+
 	FOREACH_MOD(OnDelCore, (this));
 
 	if (!this->chanaccess->empty())
@@ -157,6 +158,10 @@ void NickCore::SetDisplay(const NickAlias *na)
 		return;
 
 	FOREACH_MOD(OnChangeCoreDisplay, (this, na->nick));
+
+	/* this affects the serialized aliases */
+	for (unsigned i = 0; i < aliases->size(); ++i)
+		aliases->at(i)->QueueUpdate();
 
 	/* Remove the core from the list */
 	NickCoreList->erase(this->display);

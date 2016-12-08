@@ -1,6 +1,6 @@
 /* MemoServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -31,6 +31,8 @@ class CommandMSSendAll : public Command
 			return;
 
 		const Anope::string &text = params[0];
+
+		Log(LOG_ADMIN, source, this) << "to send " << text;
 
 		for (nickcore_map::const_iterator it = NickCoreList->begin(), it_end = NickCoreList->end(); it != it_end; ++it)
 		{

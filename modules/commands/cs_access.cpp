@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -122,6 +122,7 @@ class CommandCSAccess : public Command
 		tmp_access.level = level;
 
 		bool override = false;
+		const NickAlias *na = NULL;
 
 		if ((!highest || *highest <= tmp_access) && !u_access.founder)
 		{
@@ -158,7 +159,8 @@ class CommandCSAccess : public Command
 		}
 		else
 		{
-			const NickAlias *na = NickAlias::Find(mask);
+			na = NickAlias::Find(mask);
+
 			if (!na && Config->GetModule("chanserv")->Get<bool>("disallow_hostmask_access"))
 			{
 				source.Reply(_("Masks and unregistered users may not be on access lists."));
@@ -175,12 +177,15 @@ class CommandCSAccess : public Command
 					return;
 				}
 			}
+
+			if (na)
+				mask = na->nick;
 		}
 
 		for (unsigned i = ci->GetAccessCount(); i > 0; --i)
 		{
 			const ChanAccess *access = ci->GetAccess(i - 1);
-			if (mask.equals_ci(access->mask))
+			if ((na && na->nc == access->GetAccount()) || mask.equals_ci(access->Mask()))
 			{
 				/* Don't allow lowering from a level >= u_level */
 				if ((!highest || *access >= *highest) && !u_access.founder && !source.HasPriv("chanserv/access/modify"))
@@ -204,8 +209,7 @@ class CommandCSAccess : public Command
 		if (!provider)
 			return;
 		AccessChanAccess *access = anope_dynamic_static_cast<AccessChanAccess *>(provider->Create());
-		access->ci = ci;
-		access->mask = mask;
+		access->SetMask(mask, ci);
 		access->creator = source.GetNick();
 		access->level = level;
 		access->last_seen = 0;
@@ -216,9 +220,9 @@ class CommandCSAccess : public Command
 
 		Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to add " << mask << " with level " << level;
 		if (p != NULL)
-			source.Reply(_("\002%s\002 added to %s access list at privilege %s (level %d)"), access->mask.c_str(), ci->name.c_str(), p->name.c_str(), level);
+			source.Reply(_("\002%s\002 added to %s access list at privilege %s (level %d)"), access->Mask().c_str(), ci->name.c_str(), p->name.c_str(), level);
 		else
-			source.Reply(_("\002%s\002 added to %s access list at level \002%d\002."), access->mask.c_str(), ci->name.c_str(), level);
+			source.Reply(_("\002%s\002 added to %s access list at level \002%d\002."), access->Mask().c_str(), ci->name.c_str(), level);
 	}
 
 	void DoDel(CommandSource &source, ChannelInfo *ci, const std::vector<Anope::string> &params)
@@ -284,7 +288,7 @@ class CommandCSAccess : public Command
 					AccessGroup ag = source.AccessFor(ci);
 					const ChanAccess *u_highest = ag.Highest();
 
-					if ((!u_highest || *u_highest <= *access) && !ag.founder && !this->override && !access->mask.equals_ci(source.nc->display))
+					if ((!u_highest || *u_highest <= *access) && !ag.founder && !this->override && access->GetAccount() != source.nc)
 					{
 						denied = true;
 						return;
@@ -292,9 +296,9 @@ class CommandCSAccess : public Command
 
 					++deleted;
 					if (!Nicks.empty())
-						Nicks += ", " + access->mask;
+						Nicks += ", " + access->Mask();
 					else
-						Nicks = access->mask;
+						Nicks = access->Mask();
 
 					ci->EraseAccess(Number - 1);
 
@@ -313,15 +317,15 @@ class CommandCSAccess : public Command
 			for (unsigned i = ci->GetAccessCount(); i > 0; --i)
 			{
 				ChanAccess *access = ci->GetAccess(i - 1);
-				if (mask.equals_ci(access->mask))
+				if (mask.equals_ci(access->Mask()))
 				{
-					if (!access->mask.equals_ci(source.nc->display) && !u_access.founder && (!highest || *highest <= *access) && !source.HasPriv("chanserv/access/modify"))
+					if (access->GetAccount() != source.nc && !u_access.founder && (!highest || *highest <= *access) && !source.HasPriv("chanserv/access/modify"))
 						source.Reply(ACCESS_DENIED);
 					else
 					{
-						source.Reply(_("\002%s\002 deleted from %s access list."), access->mask.c_str(), ci->name.c_str());
-						bool override = !u_access.founder && !u_access.HasPriv("ACCESS_CHANGE") && !access->mask.equals_ci(source.nc->display);
-						Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to delete " << access->mask;
+						source.Reply(_("\002%s\002 deleted from %s access list."), access->Mask().c_str(), ci->name.c_str());
+						bool override = !u_access.founder && !u_access.HasPriv("ACCESS_CHANGE") && access->GetAccount() != source.nc;
+						Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to delete " << access->Mask();
 
 						ci->EraseAccess(i - 1);
 						FOREACH_MOD(OnAccessDel, (ci, source, access));
@@ -366,7 +370,7 @@ class CommandCSAccess : public Command
 					if (ci->c)
 						for (Channel::ChanUserList::const_iterator cit = ci->c->users.begin(), cit_end = ci->c->users.end(); cit != cit_end; ++cit)
 						{
-							ChanAccess::Path p;
+							ChannelInfo *p;
 							if (access->Matches(cit->second->user, cit->second->user->Account(), p))
 								timebuf = "Now";
 						}
@@ -381,7 +385,7 @@ class CommandCSAccess : public Command
 					ListFormatter::ListEntry entry;
 					entry["Number"] = stringify(number);
 					entry["Level"] = access->AccessSerialize();
-					entry["Mask"] = access->mask;
+					entry["Mask"] = access->Mask();
 					entry["By"] = access->creator;
 					entry["Last seen"] = timebuf;
 					this->list.AddEntry(entry);
@@ -396,14 +400,14 @@ class CommandCSAccess : public Command
 			{
 				const ChanAccess *access = ci->GetAccess(i);
 
-				if (!nick.empty() && !Anope::Match(access->mask, nick))
+				if (!nick.empty() && !Anope::Match(access->Mask(), nick))
 					continue;
 
 				Anope::string timebuf;
 				if (ci->c)
 					for (Channel::ChanUserList::const_iterator cit = ci->c->users.begin(), cit_end = ci->c->users.end(); cit != cit_end; ++cit)
 					{
-						ChanAccess::Path p;
+						ChannelInfo *p;
 						if (access->Matches(cit->second->user, cit->second->user->Account(), p))
 							timebuf = "Now";
 					}
@@ -418,7 +422,7 @@ class CommandCSAccess : public Command
 				ListFormatter::ListEntry entry;
 				entry["Number"] = stringify(i + 1);
 				entry["Level"] = access->AccessSerialize();
-				entry["Mask"] = access->mask;
+				entry["Mask"] = access->Mask();
 				entry["By"] = access->creator;
 				entry["Last seen"] = timebuf;
 				list.AddEntry(entry);
@@ -518,6 +522,8 @@ class CommandCSAccess : public Command
 
 		bool has_access = false;
 		if (source.HasPriv("chanserv/access/modify"))
+			has_access = true;
+		else if (is_list && source.HasPriv("chanserv/access/list"))
 			has_access = true;
 		else if (is_list && source.AccessFor(ci).HasPriv("ACCESS_LIST"))
 			has_access = true;
@@ -660,7 +666,7 @@ class CommandCSLevels : public Command
 	{
 		const Anope::string &what = params[2];
 
-		/* Don't allow disabling of the founder level. It would be hard to change it back if you dont have access to use this command */
+		/* Don't allow disabling of the founder level. It would be hard to change it back if you don't have access to use this command */
 		if (what.equals_ci("FOUNDER"))
 		{
 			source.Reply(_("You can not disable the founder privilege because it would be impossible to reenable it at a later time."));
@@ -752,12 +758,20 @@ class CommandCSLevels : public Command
 			return;
 		}
 
+		bool has_access = false;
+		if (source.HasPriv("chanserv/access/modify"))
+			has_access = true;
+		else if (cmd.equals_ci("LIST") && source.HasPriv("chanserv/access/list"))
+			has_access = true;
+		else if (source.AccessFor(ci).HasPriv("FOUNDER"))
+			has_access = true;
+
 		/* If SET, we want two extra parameters; if DIS[ABLE] or FOUNDER, we want only
 		 * one; else, we want none.
 		 */
 		if (cmd.equals_ci("SET") ? s.empty() : (cmd.substr(0, 3).equals_ci("DIS") ? (what.empty() || !s.empty()) : !what.empty()))
 			this->OnSyntaxError(source, cmd);
-		else if (!source.AccessFor(ci).HasPriv("FOUNDER") && !source.HasPriv("chanserv/access/modify"))
+		else if (!has_access)
 			source.Reply(ACCESS_DENIED);
 		else if (Anope::ReadOnly && !cmd.equals_ci("LIST"))
 			source.Reply(READ_ONLY_MODE);
@@ -877,9 +891,22 @@ class CSAccess : public Module
 	{
 		if (group->ci == NULL)
 			return EVENT_CONTINUE;
-		/* Special case. Allows a level of < 0 to match anyone, and a level of 0 to match anyone identified. */
+
+		const ChanAccess *highest = group->Highest();
+		if (highest && highest->provider == &accessprovider)
+		{
+			/* Access accessprovider is the only accessprovider with the concept of negative access,
+			 * so check they don't have negative access
+			 */
+			const AccessChanAccess *aca = anope_dynamic_static_cast<const AccessChanAccess *>(highest);
+
+			if (aca->level < 0)
+				return EVENT_CONTINUE;
+		}
+
+		/* Special case. Allows a level of -1 to match anyone, and a level of 0 to match anyone identified. */
 		int16_t level = group->ci->GetLevel(priv);
-		if (level < 0)
+		if (level == -1)
 			return EVENT_ALLOW;
 		else if (level == 0 && group->nc)
 			return EVENT_ALLOW;

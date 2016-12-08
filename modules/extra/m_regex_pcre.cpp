@@ -1,4 +1,13 @@
+/*
+ *
+ * (C) 2012-2016 Anope Team
+ * Contact us at team@anope.org
+ *
+ * Please read COPYING and README for further details.
+ */
+
 /* RequiredLibraries: pcre */
+/* RequiredWindowsLibraries: libpcre */
 
 #include "module.h"
 #include <pcre.h>
@@ -48,6 +57,26 @@ class ModuleRegexPCRE : public Module
 		pcre_regex_provider(this)
 	{
 		this->SetPermanent(true);
+	}
+
+	~ModuleRegexPCRE()
+	{
+		for (std::list<XLineManager *>::iterator it = XLineManager::XLineManagers.begin(); it != XLineManager::XLineManagers.end(); ++it)
+		{
+			XLineManager *xlm = *it;
+			const std::vector<XLine *> &xlines = xlm->GetList();
+
+			for (unsigned int i = 0; i < xlines.size(); ++i)
+			{
+				XLine *x = xlines[i];
+
+				if (x->regex && dynamic_cast<PCRERegex *>(x->regex))
+				{
+					delete x->regex;
+					x->regex = NULL;
+				}
+			}
+		}
 	}
 };
 

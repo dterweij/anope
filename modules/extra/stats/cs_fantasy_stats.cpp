@@ -1,6 +1,6 @@
 /* Chanstats core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -75,9 +75,7 @@ class CSStats : public Module
 
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
-		prefix = conf->GetModule("m_chanstats")->Get<const Anope::string>("prefix");
-		if (prefix.empty())
-			prefix = "anope_";
+		prefix = conf->GetModule("m_chanstats")->Get<const Anope::string>("prefix", "anope_");
 		this->sql = ServiceReference<SQL::Provider>("SQL::Provider", conf->GetModule("m_chanstats")->Get<const Anope::string>("engine"));
 	}
 
@@ -149,7 +147,7 @@ class CSStats : public Module
 				else
 					source.Reply(_("Channel stats for %s on %s:"), display.c_str(), channel.c_str());
 
-				source.Reply(_("letters: %s, words: %s, lines: %s, smileys %s, actions: %s"),
+				source.Reply(_("letters: %s, words: %s, lines: %s, smileys: %s, actions: %s"),
 						res.Get(0, "letters").c_str(), res.Get(0, "words").c_str(),
 						res.Get(0, "line").c_str(), res.Get(0, "smileys").c_str(),
 						res.Get(0, "actions").c_str());

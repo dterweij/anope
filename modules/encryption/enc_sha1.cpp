@@ -1,4 +1,9 @@
 /*
+ *
+ * Modified for Anope.
+ * (C) 2006-2016 Anope Team
+ * Contact us at team@anope.org
+
 SHA-1 in C
 By Steve Reid <steve@edmweb.com>
 100% Public Domain
@@ -15,7 +20,7 @@ A million repetitions of "a"
 /* #define LITTLE_ENDIAN * This should be #define'd if true. */
 
 #include "module.h"
-#include "encryption.h"
+#include "modules/encryption.h"
 
 union CHAR64LONG16
 {

@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -76,7 +76,11 @@ class CommandOSChanKill : public Command
 					if (uc->user->server == Me || uc->user->HasMode("OPER"))
 						continue;
 
-					XLine *x = new XLine("*@" + uc->user->host, source.GetNick(), expires, realreason, XLineManager::GenerateUID());
+					Anope::string akillmask = "*@" + uc->user->host;
+					if (akills->HasEntry(akillmask))
+						continue;
+
+					XLine *x = new XLine(akillmask, source.GetNick(), expires, realreason, XLineManager::GenerateUID());
 					akills->AddXLine(x);
 					akills->OnMatch(uc->user, x);
 				}

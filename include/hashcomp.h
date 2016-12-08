@@ -1,10 +1,9 @@
 /*
  *
- * Copyright (C) 2002-2011 InspIRCd Development Team
- * Copyright (C) 2009-2014 Anope Team <team@anope.org>
+ * (C) 2002-2011 InspIRCd Development Team
+ * (C) 2009-2016 Anope Team <team@anope.org>
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #ifndef HASHCOMP_H
@@ -123,7 +122,7 @@ namespace ci
 		 * @param s1 String to find in
 		 * @param n Position to search up to
 		 * @param c Character to search for
-		 * @return Pointer to the first occurance of c in s1
+		 * @return Pointer to the first occurrence of c in s1
 		 */
 		static const char *find(const char *s1, int n, char c);
 	};

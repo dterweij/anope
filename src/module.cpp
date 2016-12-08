@@ -1,10 +1,9 @@
 /* Modular support
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #include "services.h"
@@ -64,6 +63,8 @@ Module::Module(const Anope::string &modname, const Anope::string &, ModType modt
 
 Module::~Module()
 {
+	UnsetExtensibles();
+
 	/* Detach all event hooks for this module */
 	ModuleManager::DetachAll(this);
 	IdentifyRequest::ModuleUnload(this);
@@ -101,8 +102,15 @@ void Module::SetAuthor(const Anope::string &nauthor)
 	this->author = nauthor;
 }
 
-ModuleVersion::ModuleVersion(int maj, int min, int pa) : version_major(maj), version_minor(min), version_patch(pa)
+void Module::Prioritize()
 {
+}
+
+ModuleVersion::ModuleVersion(const ModuleVersionC &ver)
+{
+	version_major = ver.version_major;
+	version_minor = ver.version_minor;
+	version_patch = ver.version_patch;
 }
 
 int ModuleVersion::GetMajor() const

@@ -1,5 +1,5 @@
 /*
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -220,8 +220,11 @@ void TemplateFileServer::Serve(HTTPProvider *server, const Anope::string &page_n
 					Log() << "Invalid INCLUDE in web template " << this->file_name;
 				else
 				{
-					reply.Write(finished); // Write out what we have currently so we insert this files contents here
-					finished.clear();
+					if (!finished.empty())
+					{
+						reply.Write(finished); // Write out what we have currently so we insert this files contents here
+						finished.clear();
+					}
 
 					TemplateFileServer tfs(tokens[1]);
 					tfs.Serve(server, page_name, client, message, reply, r);
@@ -255,7 +258,7 @@ void TemplateFileServer::Serve(HTTPProvider *server, const Anope::string &page_n
 		}
 	}
 
-	reply.Write(finished);
-	return;
+	if (!finished.empty())
+		reply.Write(finished);
 }
 

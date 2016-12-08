@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,17 +10,17 @@
  */
 
 #include "module.h"
-#include "modules/ns_suspend.h"
+#include "modules/suspend.h"
 
 static ServiceReference<NickServService> nickserv("NickServService", "NickServ");
 
-struct NSSuspendInfoImpl : NSSuspendInfo, Serializable
+struct NSSuspendInfo : SuspendInfo, Serializable
 {
-	NSSuspendInfoImpl(Extensible *) : Serializable("NSSuspendInfo") { }
+	NSSuspendInfo(Extensible *) : Serializable("NSSuspendInfo") { }
 
 	void Serialize(Serialize::Data &data) const anope_override
 	{
-		data["nick"] << nick;
+		data["nick"] << what;
 		data["by"] << by;
 		data["reason"] << reason;
 		data["time"] << when;
@@ -32,16 +32,16 @@ struct NSSuspendInfoImpl : NSSuspendInfo, Serializable
 		Anope::string snick;
 		data["nick"] >> snick;
 
-		NSSuspendInfoImpl *si;
+		NSSuspendInfo *si;
 		if (obj)
-			si = anope_dynamic_static_cast<NSSuspendInfoImpl *>(obj);
+			si = anope_dynamic_static_cast<NSSuspendInfo *>(obj);
 		else
 		{
 			NickAlias *na = NickAlias::Find(snick);
 			if (!na)
 				return NULL;
-			si = na->nc->Extend<NSSuspendInfoImpl>("NS_SUSPENDED");
-			data["nick"] >> si->nick;
+			si = na->nc->Extend<NSSuspendInfo>("NS_SUSPENDED");
+			data["nick"] >> si->what;
 		}
 
 		data["by"] >> si->by;
@@ -110,7 +110,7 @@ class CommandNSSuspend : public Command
 		NickCore *nc = na->nc;
 
 		NSSuspendInfo *si = nc->Extend<NSSuspendInfo>("NS_SUSPENDED");
-		si->nick = nc->display;
+		si->what = nc->display;
 		si->by = source.GetNick();
 		si->reason = reason;
 		si->when = Anope::CurTime;
@@ -181,9 +181,12 @@ class CommandNSUnSuspend : public Command
 			return;
 		}
 
+		NSSuspendInfo *si = na->nc->GetExt<NSSuspendInfo>("NS_SUSPENDED");
+
+		Log(LOG_ADMIN, source, this) << "for " << na->nick << " which was suspended by " << (!si->by.empty() ? si->by : "(none)") << " for: " << (!si->reason.empty() ? si->reason : "No reason");
+
 		na->nc->Shrink<NSSuspendInfo>("NS_SUSPENDED");
 
-		Log(LOG_ADMIN, source, this) << "for " << na->nick;
 		source.Reply(_("Nick %s is now released."), nick.c_str());
 
 		FOREACH_MOD(OnNickUnsuspended, (na));
@@ -202,31 +205,53 @@ class NSSuspend : public Module
 {
 	CommandNSSuspend commandnssuspend;
 	CommandNSUnSuspend commandnsunsuspend;
-	ExtensibleItem<NSSuspendInfoImpl> suspend;
+	ExtensibleItem<NSSuspendInfo> suspend;
 	Serialize::Type suspend_type;
+	std::vector<Anope::string> show;
+
+	struct trim
+	{
+		Anope::string operator()(Anope::string s) const
+		{
+			return s.trim();
+		}
+	};
+
+	bool Show(CommandSource &source, const Anope::string &what) const
+	{
+		return source.IsOper() || std::find(show.begin(), show.end(), what) != show.end();
+	}
 
  public:
 	NSSuspend(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
 		commandnssuspend(this), commandnsunsuspend(this), suspend(this, "NS_SUSPENDED"),
-		suspend_type("NSSuspendInfo", NSSuspendInfoImpl::Unserialize)
+		suspend_type("NSSuspendInfo", NSSuspendInfo::Unserialize)
 	{
+	}
+
+	void OnReload(Configuration::Conf *conf) anope_override
+	{
+		Anope::string s = conf->GetModule(this)->Get<Anope::string>("show");
+		commasepstream(s).GetTokens(show);
+		std::transform(show.begin(), show.end(), show.begin(), trim());
 	}
 
 	void OnNickInfo(CommandSource &source, NickAlias *na, InfoFormatter &info, bool show_hidden) anope_override
 	{
 		NSSuspendInfo *s = suspend.Get(na->nc);
-		if (s)
-		{
+		if (!s)
+			return;
+
+		if (show_hidden || Show(source, "suspended"))
 			info[_("Suspended")] = _("This nickname is \002suspended\002.");
-			if (!s->by.empty())
-				info[_("Suspended by")] = s->by;
-			if (!s->reason.empty())
-				info[_("Suspend reason")] = s->reason;
-			if (s->when)
-				info[_("Suspended on")] = Anope::strftime(s->when, source.GetAccount(), true);
-			if (s->expires)
-				info[_("Suspension expires")] = Anope::strftime(s->expires, source.GetAccount(), true);
-		}
+		if (!s->by.empty() && (show_hidden || Show(source, "by")))
+			info[_("Suspended by")] = s->by;
+		if (!s->reason.empty() && (show_hidden || Show(source, "reason")))
+			info[_("Suspend reason")] = s->reason;
+		if (s->when && (show_hidden || Show(source, "on")))
+			info[_("Suspended on")] = Anope::strftime(s->when, source.GetAccount());
+		if (s->expires && (show_hidden || Show(source, "expires")))
+			info[_("Suspension expires")] = Anope::strftime(s->expires, source.GetAccount());
 	}
 
 	void OnPreNickExpire(NickAlias *na, bool &expire) anope_override

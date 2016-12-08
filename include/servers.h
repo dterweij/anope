@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #ifndef SERVERS_H
@@ -23,10 +22,6 @@ extern CoreExport Server *Me;
 
 namespace Servers
 {
-	/* Retrieves the next free TS6 UID or SID */
-	extern CoreExport const Anope::string TS6_UID_Retrieve();
-	extern CoreExport const Anope::string TS6_SID_Retrieve();
-
 	/* Gets our uplink. Note we don't actually have an "uplink", this is just
 	 * the only server whose uplink *is* Me that is not a juped server.
 	 * @return Our uplink, or NULL if not uplinked to anything

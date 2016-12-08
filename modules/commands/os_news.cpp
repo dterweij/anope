@@ -1,7 +1,7 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
- * Contact us at info@anope.org
+ * (C) 2003-2016 Anope Team
+ * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
@@ -403,23 +403,27 @@ class OSNews : public Module
 		else if (Type == NEWS_RANDOM)
 			msg = _("[\002Random News\002 - %s] %s");
 
-		unsigned displayed = 0;
-		for (unsigned i = 0, end = newsList.size(); i < end; ++i)
+		int start = 0;
+	       
+		if (Type != NEWS_RANDOM)
+		{
+			start = newsList.size() - news_count;
+			if (start < 0)
+				start = 0;
+		}
+
+		for (unsigned i = start, end = newsList.size(); i < end; ++i)
 		{
 			if (Type == NEWS_RANDOM && i != cur_rand_news)
 				continue;
 
 			u->SendMessage(bi, msg.c_str(), Anope::strftime(newsList[i]->time, u->Account(), true).c_str(), newsList[i]->text.c_str());
 
-			++displayed;
-
 			if (Type == NEWS_RANDOM)
 			{
 				++cur_rand_news;
 				break;
 			}
-			else if (displayed >= news_count)
-				break;
 		}
 
 		/* Reset to head of list to get first random news value */

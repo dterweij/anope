@@ -1,10 +1,9 @@
 /* Channel support
  *
- * (C) 2008-2014 Anope Team
+ * (C) 2008-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
- *
  */
 
 #ifndef CHANNELS_H
@@ -32,6 +31,8 @@ struct ChanUserContainer : public Extensible
 
 class CoreExport Channel : public Base, public Extensible
 {
+	static std::vector<Channel *> deleting;
+
  public:
 	typedef std::multimap<Anope::string, Anope::string> ModeList;
  private:
@@ -242,9 +243,9 @@ class CoreExport Channel : public Base, public Extensible
 
 	/** Get a list of modes on a channel
 	 * @param name A mode name to get the list of
-	 * @return a pair of iterators for the beginning and end of the list
+	 * @return a vector of the list mode entries
 	 */
-	std::pair<ModeList::iterator, ModeList::iterator> GetModeList(const Anope::string &name);
+	std::vector<Anope::string> GetModeList(const Anope::string &name);
 
 	/** Get a string of the modes set on this channel
 	 * @param complete Include mode parameters
@@ -258,7 +259,7 @@ class CoreExport Channel : public Base, public Extensible
 	 * @param newtopic The new topic
 	 * @param ts The time the new topic is being set
 	 */
-	void ChangeTopicInternal(const Anope::string &user, const Anope::string &newtopic, time_t ts = Anope::CurTime);
+	void ChangeTopicInternal(User *u, const Anope::string &user, const Anope::string &newtopic, time_t ts = Anope::CurTime);
 
 	/** Update the topic of the channel, and reset it if topiclock etc says to
 	 * @param user The user setting the topic
@@ -276,10 +277,11 @@ class CoreExport Channel : public Base, public Extensible
 
 	/** Unbans a user from this channel.
 	 * @param u The user to unban
+	 * @param mode The mode to unban
 	 * @param full Whether or not to match using the user's real host and IP
 	 * @return whether or not a ban was removed
 	 */
-	bool Unban(User *u, bool full = false);
+	bool Unban(User *u, const Anope::string &mode, bool full = false);
 
 	/** Check whether a user is permitted to be on this channel
 	 * @param u The user
@@ -299,6 +301,10 @@ class CoreExport Channel : public Base, public Extensible
 	 * @param ts The time the channel was created
 	 */
 	static Channel *FindOrCreate(const Anope::string &name, bool &created, time_t ts = Anope::CurTime);
+
+	void QueueForDeletion();
+
+	static void DeleteChannels();
 };
 
 #endif // CHANNELS_H

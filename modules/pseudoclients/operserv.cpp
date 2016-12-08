@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -53,13 +53,10 @@ class SGLineManager : public XLineManager
 		if (!x->GetReal().empty() && !Anope::Match(u->realname, x->GetReal()))
 			return false;
 
-		if (x->GetHost().find('/') != Anope::string::npos)
-		{
-			if (cidr(x->GetHost()).match(sockaddrs(u->ip)))
-				return true;
-		}
+		if (x->c && x->c->match(u->ip))
+			return true;
 
-		if (x->GetHost().empty() || Anope::Match(u->host, x->GetHost()) || Anope::Match(u->ip, x->GetHost()))
+		if (x->GetHost().empty() || Anope::Match(u->host, x->GetHost()) || Anope::Match(u->ip.addr(), x->GetHost()))
 			return true;
 
 		return false;
@@ -95,9 +92,17 @@ class SQLineManager : public XLineManager
 				u->Kill(Config->GetClient("OperServ"), "Q-Lined: " + x->reason);
 		}
 		else if (x->IsRegex())
-			;
+		{
+			if (u)
+				u->Kill(Config->GetClient("OperServ"), "Q-Lined: " + x->reason);
+		}
 		else if (x->mask[0] != '#' || IRCD->CanSQLineChannel)
+		{
 			IRCD->SendSQLine(u, x);
+			/* If it is an oper, assume they're walking it, otherwise kill for good measure */
+			if (u && !u->HasMode("OPER"))
+				u->Kill(Config->GetClient("OperServ"), "Q-Lined: " + x->reason);
+		}
 	}
 
 	void SendDel(XLine *x) anope_override
@@ -120,13 +125,20 @@ class SQLineManager : public XLineManager
 		for (std::vector<XLine *>::const_iterator it = this->GetList().begin(), it_end = this->GetList().end(); it != it_end; ++it)
 		{
 			XLine *x = *it;
+
 			if (x->regex)
 			{
 				if (x->regex->Matches(c->name))
 					return x;
 			}
-			else if (Anope::Match(c->name, x->mask, false, true))
-				return x;
+			else
+			{
+				if (x->mask.empty() || x->mask[0] != '#')
+					continue;
+
+				if (Anope::Match(c->name, x->mask, false, true))
+					return x;
+			}
 		}
 		return NULL;
 	}
@@ -261,6 +273,7 @@ class OperServCore : public Module
 		if (x)
 		{
 			this->sqlines.OnMatch(u, x);
+			reason = x->reason;
 			return EVENT_STOP;
 		}
 

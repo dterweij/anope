@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -78,7 +78,7 @@ class CommandNSAList : public Command
 				continue;
 			}
 
-			AccessGroup access = ci->AccessFor(nc);
+			AccessGroup access = ci->AccessFor(nc, false);
 			if (access.empty())
 				continue;
 				
@@ -86,8 +86,17 @@ class CommandNSAList : public Command
 
 			entry["Number"] = stringify(chan_count);
 			entry["Channel"] = (ci->HasExt("CS_NO_EXPIRE") ? "!" : "") + ci->name;
-			for (unsigned j = 0; j < access.size(); ++j)
-				entry["Access"] = entry["Access"] + ", " + access[j]->AccessSerialize();
+			for (unsigned j = 0; j < access.paths.size(); ++j)
+			{
+				ChanAccess::Path &p = access.paths[j];
+
+				// not interested in indirect access
+				if (p.size() != 1)
+					continue;
+
+				ChanAccess *a = p[0];
+				entry["Access"] = entry["Access"] + ", " + a->AccessSerialize();
+			}
 			entry["Access"] = entry["Access"].substr(2);
 			entry["Description"] = ci->desc;
 			list.AddEntry(entry);

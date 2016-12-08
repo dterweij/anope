@@ -1,6 +1,6 @@
 /* HostServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -56,7 +56,7 @@ class CommandHSDelAll : public Command
  public:
 	CommandHSDelAll(Module *creator) : Command(creator, "hostserv/delall", 1, 1)
 	{
-		this->SetDesc(_("Delete the vhost for all nicks in a group"));
+		this->SetDesc(_("Deletes the vhost for all nicks in a group"));
 		this->SetSyntax(_("\037nick\037"));
 	}
 
@@ -105,7 +105,8 @@ class HSDel : public Module
 	HSDel(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
 		commandhsdel(this), commandhsdelall(this)
 	{
-
+		if (!IRCD || !IRCD->CanSetVHost)
+			throw ModuleException("Your IRCd does not support vhosts");
 	}
 };
 

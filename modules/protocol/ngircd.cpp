@@ -1,9 +1,7 @@
-/*
- * ngIRCd Protocol module for Anope IRC Services
+/* ngIRCd Protocol module for Anope IRC Services
  *
- * (C) 2012 Anope Team <team@anope.org>
- * (C) 2011-2012 Alexander Barton <alex@barton.de>
- * (C) 2011 Anope Team <team@anope.org>
+ * (C) 2011-2012, 2014 Alexander Barton <alex@barton.de>
+ * (C) 2011-2016 Anope Team <team@anope.org>
  *
  * Please read COPYING and README for further details.
  *
@@ -15,6 +13,12 @@
 
 class ngIRCdProto : public IRCDProto
 {
+	void SendSVSKillInternal(const MessageSource &source, User *user, const Anope::string &buf) anope_override
+	{
+		IRCDProto::SendSVSKillInternal(source, user, buf);
+		user->KillInternal(source, buf);
+	}
+
  public:
 	ngIRCdProto(Module *creator) : IRCDProto(creator, "ngIRCd")
 	{
@@ -95,7 +99,7 @@ class ngIRCdProto : public IRCDProto
 			if (uc != NULL)
 				uc->status.Clear();
 
-			BotInfo *setter = BotInfo::Find(user->nick);
+			BotInfo *setter = BotInfo::Find(user->GetUID());
 			for (size_t i = 0; i < cs.Modes().length(); ++i)
 				c->SetMode(setter, ModeManager::FindChannelModeByChar(cs.Modes()[i]), user->GetUID(), false);
 
@@ -112,9 +116,9 @@ class ngIRCdProto : public IRCDProto
 			UplinkSocket::Message(source) << "KICK " << chan->name << " " << user->nick;
 	}
 
-	void SendLogin(User *u) anope_override
+	void SendLogin(User *u, NickAlias *na) anope_override
 	{
-		UplinkSocket::Message(Me) << "METADATA " << u->GetUID() << " accountname :" << u->Account()->display;
+		UplinkSocket::Message(Me) << "METADATA " << u->GetUID() << " accountname :" << na->nc->display;
 	}
 
 	void SendLogout(User *u) anope_override
@@ -162,6 +166,11 @@ class ngIRCdProto : public IRCDProto
 	void SendVhostDel(User *u) anope_override
 	{
 		this->SendVhost(u, u->GetIdent(), "");
+	}
+
+	Anope::string Format(const Anope::string &source, const Anope::string &message) anope_override
+	{
+		return IRCDProto::Format(source.empty() ? Me->GetSID() : source, message);
 	}
 };
 
@@ -246,7 +255,7 @@ struct IRCDMessageChaninfo : IRCDMessage
 
 		if (params.size() == 3)
 		{
-			c->ChangeTopicInternal(source.GetName(), params[2], Anope::CurTime);
+			c->ChangeTopicInternal(NULL, source.GetName(), params[2], Anope::CurTime);
 		}
 		else if (params.size() == 5)
 		{
@@ -260,9 +269,9 @@ struct IRCDMessageChaninfo : IRCDMessage
 					case 'l':
 						modes += " " + params[3];
 						continue;
+				}
 			}
-		}
-			c->ChangeTopicInternal(source.GetName(), params[4], Anope::CurTime);
+			c->ChangeTopicInternal(NULL, source.GetName(), params[4], Anope::CurTime);
 		}
 
 		c->SetModesInternal(source, modes);
@@ -271,7 +280,7 @@ struct IRCDMessageChaninfo : IRCDMessage
 
 struct IRCDMessageJoin : Message::Join
 {
-	IRCDMessageJoin(Module *creator) : Message::Join(creator, "JOIN") { }
+	IRCDMessageJoin(Module *creator) : Message::Join(creator, "JOIN") { SetFlag(IRCDMESSAGE_REQUIRE_USER); }
 
 	/*
 	 * <@po||ux> DukeP: RFC 2813, 4.2.1: the JOIN command on server-server links
@@ -431,13 +440,23 @@ struct IRCDMessageNick : IRCDMessage
 	{
 		if (params.size() == 1)
 		{
+			User *u = source.GetUser();
+
 			// we have a nickchange
-			source.GetUser()->ChangeNick(params[0]);
+			if (u)
+				u->ChangeNick(params[0]);
 		}
 		else if (params.size() == 7)
 		{
 			// a new user is connecting to the network
-			new User(params[0], params[2], params[3], "", "", source.GetServer(), params[6], Anope::CurTime, params[5], "", NULL);
+			Server *s = Server::Find(params[4]);
+			if (s == NULL)
+			{
+				Log(LOG_DEBUG) << "User " << params[0] << " introduced from non-existent server " << params[4] << "?";
+				return;
+			}
+			User::OnIntroduce(params[0], params[2], params[3], "", "", s, params[6], Anope::CurTime, params[5], "", NULL);
+			Log(LOG_DEBUG) << "Registered nick \"" << params[0] << "\" on server " << s->GetName() << ".";
 		}
 		else
 		{
@@ -482,7 +501,7 @@ struct IRCDMessageNJoin : IRCDMessage
 			sju.second = User::Find(buf);
 			if (!sju.second)
 			{
-				Log(LOG_DEBUG) << "NJOIN for nonexistant user " << buf << " on " << params[0];
+				Log(LOG_DEBUG) << "NJOIN for non-existent user " << buf << " on " << params[0];
 				continue;
 			}
 			users.push_back(sju);
@@ -513,18 +532,17 @@ struct IRCDMessageServer : IRCDMessage
 	IRCDMessageServer(Module *creator) : IRCDMessage(creator, "SERVER", 3) { SetFlag(IRCDMESSAGE_SOFT_LIMIT); }
 
 	/*
+	 * New directly linked server:
+	 *
 	 * SERVER tolsun.oulu.fi 1 :Experimental server
 	 * 	New server tolsun.oulu.fi introducing itself
 	 * 	and attempting to register.
 	 *
-	 * RFC 2813 says the server has to send a hopcount
-	 * AND a servertoken. Not quite sure what ngIRCd is
-	 * sending here.
-	 *
 	 * params[0] = servername
-	 * params[1] = hop count (or servertoken?)
+	 * params[1] = hop count
 	 * params[2] = server description
 	 *
+	 * New remote server in the network:
 	 *
 	 * :tolsun.oulu.fi SERVER csd.bu.edu 5 34 :BU Central Server
 	 *	Server tolsun.oulu.fi is our uplink for csd.bu.edu
@@ -543,13 +561,13 @@ struct IRCDMessageServer : IRCDMessage
 		if (params.size() == 3)
 		{
 			// our uplink is introducing itself
-			new Server(Me, params[0], 1, params[2], "");
+			new Server(Me, params[0], 1, params[2], "1");
 		}
 		else
 		{
 			// our uplink is introducing a new server
 			unsigned int hops = params[1].is_pos_number_only() ? convertTo<unsigned>(params[1]) : 0;
-			new Server(source.GetServer(), params[0], hops, params[2], params[3]);
+			new Server(source.GetServer(), params[0], hops, params[3], params[2]);
 		}
 		/*
 		 * ngIRCd does not send an EOB, so we send a PING immediately
@@ -570,10 +588,10 @@ struct IRCDMessageTopic : IRCDMessage
 		Channel *c = Channel::Find(params[0]);
 		if (!c)
 		{
-			Log(LOG_DEBUG) << "TOPIC for nonexistant channel " << params[0];
+			Log(LOG_DEBUG) << "TOPIC for non-existent channel " << params[0];
 			return;
 		}
-		c->ChangeTopicInternal(source.GetName(), params[1], Anope::CurTime);
+		c->ChangeTopicInternal(source.GetUser(), source.GetName(), params[1], Anope::CurTime);
 	}
 };
 
@@ -644,7 +662,7 @@ class ProtongIRCd : public Module
 		/* Add channel modes */
 		ModeManager::AddChannelMode(new ChannelMode("INVITE", 'i'));
 		ModeManager::AddChannelMode(new ChannelModeKey('k'));
-		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l'));
+		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l', true));
 		ModeManager::AddChannelMode(new ChannelMode("MODERATED", 'm'));
 		ModeManager::AddChannelMode(new ChannelMode("REGMODERATED", 'M'));
 		ModeManager::AddChannelMode(new ChannelMode("NOEXTERNAL", 'n'));

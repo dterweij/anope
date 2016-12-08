@@ -1,6 +1,6 @@
-/* NickServ core functions
+/*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -9,12 +9,11 @@
  * Based on the original code of Services by Andy Church.
  */
 
-struct NSSuspendInfo
+struct SuspendInfo
 {
-	Anope::string nick, by, reason;
+	Anope::string what, by, reason;
 	time_t when, expires;
 
-	virtual ~NSSuspendInfo() { }
- protected:
-	NSSuspendInfo() { }
+	SuspendInfo() { }
+	virtual ~SuspendInfo() { }
 };

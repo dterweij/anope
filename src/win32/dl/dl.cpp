@@ -1,6 +1,7 @@
- /* POSIX emulation layer for Windows.
+/* POSIX emulation layer for Windows.
  *
- * Copyright (C) 2008-2014 Anope Team <team@anope.org>
+ * (C) 2008-2016 Anope Team
+ * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  */
@@ -15,7 +16,8 @@ void *dlopen(const char *filename, int)
 
 char *dlerror(void)
 {
-	static Anope::string err = Anope::LastError();
+	static Anope::string err;
+	err = Anope::LastError();
 	SetLastError(0);
 	return err.empty() ? NULL : const_cast<char *>(err.c_str());
 }

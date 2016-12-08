@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -26,7 +26,7 @@ class CommandOSMode : public Command
 		const Anope::string &target = params[0];
 		const Anope::string &modes = params[1];
 
-		Channel *c = Channel::Find(target);
+		Reference<Channel> c = Channel::Find(target);
 		if (!c)
 			source.Reply(CHAN_X_NOT_IN_USE, target.c_str());
 		else if (c->bouncy_modes)
@@ -36,8 +36,14 @@ class CommandOSMode : public Command
 			bool all = params.size() > 2 && params[2].equals_ci("ALL");
 
 			const Channel::ModeList chmodes = c->GetModes();
-			for (Channel::ModeList::const_iterator it = chmodes.begin(), it_end = chmodes.end(); it != it_end; ++it)
+			for (Channel::ModeList::const_iterator it = chmodes.begin(), it_end = chmodes.end(); it != it_end && c; ++it)
 				c->RemoveMode(c->ci->WhoSends(), it->first, it->second, false);
+
+			if (!c)
+			{
+				source.Reply(_("Modes cleared on %s and the channel destroyed."), target.c_str());
+				return;
+			}
 
 			if (all)
 			{
@@ -65,7 +71,7 @@ class CommandOSMode : public Command
 			Anope::string log_modes, log_params;
 
 			sep.GetToken(mode);
-			for (unsigned i = 0; i < mode.length(); ++i)
+			for (unsigned i = 0; i < mode.length() && c; ++i)
 			{
 				char ch = mode[i];
 
@@ -89,7 +95,9 @@ class CommandOSMode : public Command
 				Anope::string param, param_log;
 				if (cm->type != MODE_REGULAR)
 				{
-					if (!sep.GetToken(param))
+					if (cm->type == MODE_PARAM && !add && anope_dynamic_static_cast<ChannelModeParam *>(cm)->minus_no_arg)
+						;
+					else if (!sep.GetToken(param))
 						continue;
 
 					param_log = param;
@@ -114,7 +122,7 @@ class CommandOSMode : public Command
 			}
 
 			if (!log_modes.replace_all_cs("+", "").replace_all_cs("-", "").empty())
-				Log(LOG_ADMIN, source, this) << log_modes << log_params << " on " << c->name;
+				Log(LOG_ADMIN, source, this) << log_modes << log_params << " on " << (c ? c->name : target);
 		}
 	}
 

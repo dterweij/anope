@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "uplink.h"
@@ -60,11 +59,22 @@ void Uplink::Connect()
 
 UplinkSocket::UplinkSocket() : Socket(-1, Config->Uplinks[Anope::CurrentUplink].ipv6), ConnectionSocket(), BufferedSocket()
 {
+	error = false;
 	UplinkSock = this;
 }
 
 UplinkSocket::~UplinkSocket()
 {
+	if (!error && !Anope::Quitting)
+	{
+		this->OnError("");
+		Module *protocol = ModuleManager::FindFirstOf(PROTOCOL);
+		if (protocol && !protocol->name.find("inspircd"))
+			Log(LOG_TERMINAL) << "Check that you have loaded m_spanningtree.so on InspIRCd, and are not connecting Anope to an SSL enabled port without configuring SSL in Anope (or vice versa)";
+		else
+			Log(LOG_TERMINAL) << "Check that you are not connecting Anope to an SSL enabled port without configuring SSL in Anope (or vice versa)";
+	}
+
 	if (IRCD && Servers::GetUplink() && Servers::GetUplink()->IsSynced())
 	{
 		FOREACH_MOD(OnServerDisconnect, ());
@@ -77,7 +87,7 @@ UplinkSocket::~UplinkSocket()
 			{
 				/* Don't use quitmsg here, it may contain information you don't want people to see */
 				IRCD->SendQuit(u, "Shutting down");
-				BotInfo* bi = BotInfo::Find(u->nick);
+				BotInfo* bi = BotInfo::Find(u->GetUID());
 				if (bi != NULL)
 					bi->introduced = false;
 			}
@@ -125,6 +135,7 @@ bool UplinkSocket::ProcessRead()
 	{
 		Anope::Process(buf);
 		User::QuitUsers();
+		Channel::DeleteChannels();
 	}
 	return b;
 }
@@ -136,9 +147,11 @@ void UplinkSocket::OnConnect()
 	FOREACH_MOD(OnServerConnect, ());
 }
 
-void UplinkSocket::OnError(const Anope::string &error)
+void UplinkSocket::OnError(const Anope::string &err)
 {
-	Log(LOG_TERMINAL) << "Unable to connect to uplink #" << (Anope::CurrentUplink + 1) << " (" << Config->Uplinks[Anope::CurrentUplink].host << ":" << Config->Uplinks[Anope::CurrentUplink].port << ")" << (!error.empty() ? (": " + error) : "");
+	Anope::string what = !this->flags[SF_CONNECTED] ? "Unable to connect to" : "Lost connection from";
+	Log(LOG_TERMINAL) << what << " uplink #" << (Anope::CurrentUplink + 1) << " (" << Config->Uplinks[Anope::CurrentUplink].host << ":" << Config->Uplinks[Anope::CurrentUplink].port << ")" << (!err.empty() ? (": " + err) : "");
+	error |= !err.empty();
 }
 
 UplinkSocket::Message::Message() : source(Me)
@@ -194,14 +207,7 @@ UplinkSocket::Message::~Message()
 		return;
 	}
 
-	if (!message_source.empty())
-	{
-		UplinkSock->Write(":" + message_source + " " + this->buffer.str());
-		Log(LOG_RAWIO) << "Sent: :" << message_source << " " << this->buffer.str();
-	}
-	else
-	{
-		UplinkSock->Write(this->buffer.str());
-		Log(LOG_RAWIO) << "Sent: " << this->buffer.str();
-	}
+	Anope::string sent = IRCD->Format(message_source, this->buffer.str());
+	UplinkSock->Write(sent);
+	Log(LOG_RAWIO) << "Sent: " << sent;
 }

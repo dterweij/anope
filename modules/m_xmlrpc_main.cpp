@@ -1,3 +1,11 @@
+/*
+ *
+ * (C) 2010-2016 Anope Team
+ * Contact us at team@anope.org
+ *
+ * Please read COPYING and README for further details.
+ */
+
 #include "module.h"
 #include "modules/xmlrpc.h"
 
@@ -59,6 +67,8 @@ class MyXMLRPCEvent : public XMLRPCEvent
 			this->DoUser(iface, client, request);
 		else if (request.name == "opers")
 			this->DoOperType(iface, client, request);
+		else if (request.name == "notice")
+			this->DoNotice(iface, client, request);
 
 		return true;
 	}
@@ -74,7 +84,7 @@ class MyXMLRPCEvent : public XMLRPCEvent
 			request.reply("error", "Invalid parameters");
 		else
 		{
-			BotInfo *bi = BotInfo::Find(service);
+			BotInfo *bi = BotInfo::Find(service, true);
 			if (!bi)
 				request.reply("error", "Invalid service");
 			else
@@ -155,21 +165,21 @@ class MyXMLRPCEvent : public XMLRPCEvent
 		{
 			request.reply("bancount", stringify(c->HasMode("BAN")));
 			int count = 0;
-			std::pair<Channel::ModeList::iterator, Channel::ModeList::iterator> its = c->GetModeList("BAN");
-			for (; its.first != its.second; ++its.first)
-				request.reply("ban" + stringify(++count), iface->Sanitize(its.first->second));
+			std::vector<Anope::string> v = c->GetModeList("BAN");
+			for (unsigned int i = 0; i < v.size(); ++i)
+				request.reply("ban" + stringify(++count), iface->Sanitize(v[i]));
 
 			request.reply("exceptcount", stringify(c->HasMode("EXCEPT")));
 			count = 0;
-			its = c->GetModeList("EXCEPT");
-			for (; its.first != its.second; ++its.first)
-				request.reply("except" + stringify(++count), iface->Sanitize(its.first->second));
+			v = c->GetModeList("EXCEPT");
+			for (unsigned int i = 0; i < v.size(); ++i)
+				request.reply("except" + stringify(++count), iface->Sanitize(v[i]));
 
 			request.reply("invitecount", stringify(c->HasMode("INVITEOVERRIDE")));
 			count = 0;
-			its = c->GetModeList("INVITEOVERRIDE");
-			for (; its.first != its.second; ++its.first)
-				request.reply("invite" + stringify(++count), iface->Sanitize(its.first->second));
+			v = c->GetModeList("INVITEOVERRIDE");
+			for (unsigned int i = 0; i < v.size(); ++i)
+				request.reply("invite" + stringify(++count), iface->Sanitize(v[i]));
 
 			Anope::string users;
 			for (Channel::ChanUserList::const_iterator it = c->users.begin(); it != c->users.end(); ++it)
@@ -212,8 +222,7 @@ class MyXMLRPCEvent : public XMLRPCEvent
 				request.reply("vhost", iface->Sanitize(u->vhost));
 			if (!u->chost.empty())
 				request.reply("chost", iface->Sanitize(u->chost));
-			if (!u->ip.empty())
-				request.reply("ip", u->ip);
+			request.reply("ip", u->ip.addr());
 			request.reply("timestamp", stringify(u->timestamp));
 			request.reply("signon", stringify(u->signon));
 			if (u->Account())
@@ -249,6 +258,23 @@ class MyXMLRPCEvent : public XMLRPCEvent
 				perms += " " + *it2;
 			request.reply(ot->GetName(), perms);
 		}
+	}
+
+	void DoNotice(XMLRPCServiceInterface *iface, HTTPClient *client, XMLRPCRequest &request)
+	{
+		Anope::string from = request.data.size() > 0 ? request.data[0] : "";
+		Anope::string to = request.data.size() > 1 ? request.data[1] : "";
+		Anope::string message = request.data.size() > 2 ? request.data[2] : "";
+
+		BotInfo *bi = BotInfo::Find(from, true);
+		User *u = User::Find(to, true);
+
+		if (!bi || !u || message.empty())
+			return;
+
+		u->SendMessage(bi, message);
+
+		request.reply("result", "Success");
 	}
 };
 

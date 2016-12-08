@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,6 +10,9 @@
  */
 
 #include "module.h"
+
+class NickServCollide;
+static std::set<NickServCollide *> collides;
 
 /** Timer for colliding nicks to force people off of nicknames
  */
@@ -21,8 +24,24 @@ class NickServCollide : public Timer
 	Reference<NickAlias> na;
 
  public:
-	NickServCollide(NickServService *nss, User *user, NickAlias *nick, time_t delay) : Timer(delay), service(nss), u(user), ts(user->timestamp), na(nick)
+	NickServCollide(Module *me, NickServService *nss, User *user, NickAlias *nick, time_t delay) : Timer(me, delay), service(nss), u(user), ts(user->timestamp), na(nick)
 	{
+		collides.insert(this);
+	}
+
+	~NickServCollide()
+	{
+		collides.erase(this);
+	}
+
+	User *GetUser()
+	{
+		return u;
+	}
+
+	NickAlias *GetNick()
+	{
+		return na;
 	}
 
 	void Tick(time_t t) anope_override
@@ -44,7 +63,7 @@ class NickServHeld : public Timer
 	Reference<NickAlias> na;
 	Anope::string nick;
  public:
-	NickServHeld(NickAlias *n, long l) : Timer(l), na(n), nick(na->nick)
+	NickServHeld(Module *me, NickAlias *n, long l) : Timer(me, l), na(n), nick(na->nick)
 	{
 		n->Extend<bool>("HELD");
 	}
@@ -66,8 +85,8 @@ class NickServRelease : public User, public Timer
 	Anope::string nick;
 
  public:
-	NickServRelease(NickAlias *na, time_t delay) : User(na->nick, Config->GetModule("nickserv")->Get<const Anope::string>("enforceruser"),
-		Config->GetModule("nickserv")->Get<const Anope::string>("enforcerhost"), "", "", Me, "Services Enforcer", Anope::CurTime, "", Servers::TS6_UID_Retrieve(), NULL), Timer(delay), nick(na->nick)
+	NickServRelease(Module *me, NickAlias *na, time_t delay) : User(na->nick, Config->GetModule("nickserv")->Get<const Anope::string>("enforceruser", "user"),
+		Config->GetModule("nickserv")->Get<const Anope::string>("enforcerhost", "services.localhost.net"), "", "", Me, "Services Enforcer", Anope::CurTime, "", IRCD->UID_Retrieve(), NULL), Timer(me, delay), nick(na->nick)
 	{
 		/* Erase the current release timer and use the new one */
 		Anope::map<NickServRelease *>::iterator nit = NickServReleases.find(this->nick);
@@ -103,12 +122,12 @@ class NickServCore : public Module, public NickServService
 		{
 			collided.Unset(na);
 
-			new NickServHeld(na, Config->GetModule("nickserv")->Get<time_t>("releasetimeout", "1m"));
+			new NickServHeld(this, na, Config->GetModule("nickserv")->Get<time_t>("releasetimeout", "1m"));
 
 			if (IRCD->CanSVSHold)
 				IRCD->SendSVSHold(na->nick, Config->GetModule("nickserv")->Get<time_t>("releasetimeout", "1m"));
 			else
-				new NickServRelease(na, Config->GetModule("nickserv")->Get<time_t>("releasetimeout", "1m"));
+				new NickServRelease(this, na, Config->GetModule("nickserv")->Get<time_t>("releasetimeout", "1m"));
 		}
 	}
 
@@ -184,13 +203,13 @@ class NickServCore : public Module, public NickServService
 			{
 				time_t killquick = Config->GetModule("nickserv")->Get<time_t>("killquick", "20s");
 				u->SendMessage(NickServ, _("If you do not change within %s, I will change your nick."), Anope::Duration(killquick, u->Account()).c_str());
-				new NickServCollide(this, u, na, killquick);
+				new NickServCollide(this, this, u, na, killquick);
 			}
 			else
 			{
 				time_t kill = Config->GetModule("nickserv")->Get<time_t>("kill", "60s");
 				u->SendMessage(NickServ, _("If you do not change within %s, I will change your nick."), Anope::Duration(kill, u->Account()).c_str());
-				new NickServCollide(this, u, na, kill);
+				new NickServCollide(this, this, u, na, kill);
 			}
 		}
 
@@ -201,6 +220,10 @@ class NickServCore : public Module, public NickServService
 		NickAlias *na = NickAlias::Find(u->nick);
 		if (na && *na->nc == u->Account() && !Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && !na->nc->HasExt("UNCONFIRMED"))
 			u->SetMode(NickServ, "REGISTERED");
+
+		const Anope::string &modesonid = Config->GetModule(this)->Get<Anope::string>("modesonid");
+		if (!modesonid.empty())
+			u->SetModes(NickServ, "%s", modesonid.c_str());
 	}
 
 	void Collide(User *u, NickAlias *na) anope_override
@@ -210,6 +233,7 @@ class NickServCore : public Module, public NickServService
 
 		if (IRCD->CanSVSNick)
 		{
+			unsigned nicklen = Config->GetBlock("networkinfo")->Get<unsigned>("nicklen");
 			const Anope::string &guestprefix = Config->GetModule("nickserv")->Get<const Anope::string>("guestnickprefix", "Guest");
 
 			Anope::string guestnick;
@@ -218,20 +242,21 @@ class NickServCore : public Module, public NickServService
 			do
 			{
 				guestnick = guestprefix + stringify(static_cast<uint16_t>(rand()));
+				if (guestnick.length() > nicklen)
+					guestnick = guestnick.substr(0, nicklen);
 			}
 			while (User::Find(guestnick) && i++ < 10);
 
 			if (i == 11)
-				u->Kill(NickServ ? NickServ->nick : "", "Services nickname-enforcer kill");
+				u->Kill(*NickServ, "Services nickname-enforcer kill");
 			else
 			{
-				if (NickServ)
-					u->SendMessage(NickServ, _("Your nickname is now being changed to \002%s\002"), guestnick.c_str());
+				u->SendMessage(*NickServ, _("Your nickname is now being changed to \002%s\002"), guestnick.c_str());
 				IRCD->SendForceNickChange(u, guestnick, Anope::CurTime);
 			}
 		}
 		else
-			u->Kill(NickServ ? NickServ->nick : "", "Services nickname-enforcer kill");
+			u->Kill(*NickServ, "Services nickname-enforcer kill");
 	}
 
 	void Release(NickAlias *na) anope_override
@@ -251,6 +276,7 @@ class NickServCore : public Module, public NickServService
 
 			held.Unset(na);
 		}
+		collided.Unset(na); /* clear pending collide */
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
@@ -336,6 +362,16 @@ class NickServCore : public Module, public NickServService
 							"Your privacy is respected; this e-mail won't be given to\n"
 							"any third-party person."), Config->StrictPrivmsg.c_str(), NickServ->nick.c_str());
 		}
+
+		for (std::set<NickServCollide *>::iterator it = collides.begin(); it != collides.end(); ++it)
+		{
+			NickServCollide *c = *it;
+			if (c->GetUser() == u && c->GetNick() && c->GetNick()->nc == u->Account())
+			{
+				delete c;
+				break;
+			}
+		}
 	}
 
 	void OnNickGroup(User *u, NickAlias *target) anope_override
@@ -363,8 +399,8 @@ class NickServCore : public Module, public NickServService
 		const NickAlias *na = NickAlias::Find(u->nick);
 
 		const Anope::string &unregistered_notice = Config->GetModule(this)->Get<const Anope::string>("unregistered_notice");
-		if (!Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && !unregistered_notice.empty() && !na)
-			u->SendMessage(NickServ, unregistered_notice);
+		if (!Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && !unregistered_notice.empty() && !na && !u->Account())
+			u->SendMessage(NickServ, unregistered_notice.replace_all_cs("%n", u->nick));
 		else if (na && !u->IsIdentified(true))
 			this->Validate(u);
 	}
@@ -406,10 +442,10 @@ class NickServCore : public Module, public NickServService
 		else
 		{
 			/* Reset +r and re-send account (even though it really should be set at this point) */
-			IRCD->SendLogin(u);
+			IRCD->SendLogin(u, na);
 			if (!Config->GetModule("nickserv")->Get<bool>("nonicknameownership") && na->nc == u->Account() && !na->nc->HasExt("UNCONFIRMED"))
 				u->SetMode(NickServ, "REGISTERED");
-			Log(NickServ) << u->GetMask() << " automatically identified for group " << u->Account()->display;
+			Log(u, "", NickServ) << u->GetMask() << " automatically identified for group " << u->Account()->display;
 		}
 
 		if (!u->nick.equals_ci(oldnick) && old_na)
@@ -499,7 +535,7 @@ class NickServCore : public Module, public NickServService
 			NickAlias *na = it->second;
 			++it;
 
-			User *u = User::Find(na->nick);
+			User *u = User::Find(na->nick, true);
 			if (u && (u->IsIdentified(true) || u->IsRecognized()))
 				na->last_seen = Anope::CurTime;
 

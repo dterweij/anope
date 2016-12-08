@@ -1,13 +1,12 @@
 /*
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -76,26 +75,27 @@ const char *Language::Translate(const NickCore *nc, const char *string)
 
 #if GETTEXT_FOUND
 
-/* Used by gettext to make it always dynamically load language strings (so we can drop them in while Anope is running) */
+#ifdef __USE_GNU_GETTEXT
 extern "C" int _nl_msg_cat_cntr;
+#endif
 
 const char *Language::Translate(const char *lang, const char *string)
 {
 	if (!string || !*string)
 		return "";
-	
+
 	if (!lang || !*lang)
 		lang = Config->DefLanguage.c_str();
-	
-	if (Anope::string(lang) == "en")
-		return string;
 
+#ifdef __USE_GNU_GETTEXT
 	++_nl_msg_cat_cntr;
+#endif
+
 #ifdef _WIN32
 	SetThreadLocale(MAKELCID(MAKELANGID(WindowsGetLanguage(lang), SUBLANG_DEFAULT), SORT_DEFAULT));
 #else
 	/* First, set LANG and LANGUAGE env variables.
-	 * Some systems (Debian) don't care about this, so we must setlocale LC_ALL aswell.
+	 * Some systems (Debian) don't care about this, so we must setlocale LC_ALL as well.
 	 * BUT if this call fails because the LANGUAGE env variable is set, setlocale resets
 	 * the locale to "C", which short circuits gettext and causes it to fail on systems that
 	 * use the LANGUAGE env variable. We must reset the locale to en_US (or, anything not

@@ -1,13 +1,12 @@
-/* Initalization and related routines.
+/* Initialization and related routines.
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
  */
 
 #include "services.h"
@@ -23,6 +22,11 @@
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <sys/stat.h>
+
+#include <errno.h>
+#include <sys/types.h>
+#include <pwd.h>
+#include <grp.h>
 #endif
 
 Anope::string Anope::ConfigDir = "conf", Anope::DataDir = "data", Anope::ModuleDir = "lib", Anope::LocaleDir = "locale", Anope::LogDir = "logs";
@@ -95,6 +99,8 @@ bool Anope::AtTerm()
 	return isatty(fileno(stdout)) && isatty(fileno(stdin)) && isatty(fileno(stderr));
 }
 
+static void setuidgid();
+
 void Anope::Fork()
 {
 #ifndef _WIN32
@@ -105,6 +111,8 @@ void Anope::Fork()
 	freopen("/dev/null", "w", stderr);
 
 	setpgid(0, 0);
+
+	setuidgid();
 #else
 	FreeConsole();
 #endif
@@ -121,8 +129,10 @@ void Anope::HandleSignal()
 			try
 			{
 				Configuration::Conf *new_config = new Configuration::Conf();
-				delete Config;
+				Configuration::Conf *old = Config;
 				Config = new_config;
+				Config->Post(old);
+				delete old;
 			}
 			catch (const ConfigException &ex)
 			{
@@ -217,6 +227,61 @@ static void write_pidfile()
 	}
 	else
 		throw CoreException("Can not write to PID file " + Config->GetBlock("serverinfo")->Get<const Anope::string>("pid"));
+}
+
+static void setuidgid()
+{
+#ifndef _WIN32
+	Configuration::Block *options = Config->GetBlock("options");
+	uid_t uid = -1;
+	gid_t gid = -1;
+
+	if (!options->Get<const Anope::string>("user").empty())
+	{
+		errno = 0;
+		struct passwd *u = getpwnam(options->Get<const Anope::string>("user").c_str());
+		if (u == NULL)
+			Log() << "Unable to setuid to " << options->Get<const Anope::string>("user") << ": " << Anope::LastError();
+		else
+			uid = u->pw_uid;
+	}
+	if (!options->Get<const Anope::string>("group").empty())
+	{
+		errno = 0;
+		struct group *g = getgrnam(options->Get<const Anope::string>("group").c_str());
+		if (g == NULL)
+			Log() << "Unable to setgid to " << options->Get<const Anope::string>("group") << ": " << Anope::LastError();
+		else
+			gid = g->gr_gid;
+	}
+
+	for (unsigned i = 0; i < Config->LogInfos.size(); ++i)
+	{
+		LogInfo& li = Config->LogInfos[i];
+
+		for (unsigned j = 0; j < li.logfiles.size(); ++j)
+		{
+			LogFile* lf = li.logfiles[j];
+
+			chown(lf->filename.c_str(), uid, gid);
+		}
+	}
+
+	if (static_cast<int>(gid) != -1)
+	{
+		if (setgid(gid) == -1)
+			Log() << "Unable to setgid to " << options->Get<const Anope::string>("group") << ": " << Anope::LastError();
+		else
+			Log() << "Successfully set group to " << options->Get<const Anope::string>("group");
+	}
+	if (static_cast<int>(uid) != -1)
+	{
+		if (setuid(uid) == -1)
+			Log() << "Unable to setuid to " << options->Get<const Anope::string>("user") << ": " << Anope::LastError();
+		else
+			Log() << "Successfully set user to " << options->Get<const Anope::string>("user");
+	}
+#endif
 }
 
 void Anope::Init(int ac, char **av)
@@ -356,10 +421,15 @@ void Anope::Init(int ac, char **av)
 	/* If we're root, issue a warning now */
 	if (!getuid() && !getgid())
 	{
-		std::cerr << "WARNING: You are currently running Anope as the root superuser. Anope does not" << std::endl;
-		std::cerr << "         require root privileges to run, and it is discouraged that you run Anope" << std::endl;
-		std::cerr << "         as the root superuser." << std::endl;
-		sleep(3);
+		/* If we are configured to setuid later, don't issue a warning */
+		Configuration::Block *options = Config->GetBlock("options");
+		if (options->Get<const Anope::string>("user").empty())
+		{
+			std::cerr << "WARNING: You are currently running Anope as the root superuser. Anope does not" << std::endl;
+			std::cerr << "         require root privileges to run, and it is discouraged that you run Anope" << std::endl;
+			std::cerr << "         as the root superuser." << std::endl;
+			sleep(3);
+		}
 	}
 #endif
 
@@ -369,7 +439,7 @@ void Anope::Init(int ac, char **av)
 	Log(LOG_TERMINAL) << "Using configuration file " << Anope::ConfigDir << "/" << ServicesConf.GetName();
 
 	/* Fork to background */
-	if (!Anope::NoFork && Anope::AtTerm())
+	if (!Anope::NoFork)
 	{
 		/* Install these before fork() - it is possible for the child to
 		 * connect and kill() the parent before it is able to install the
@@ -425,9 +495,6 @@ void Anope::Init(int ac, char **av)
 		throw CoreException("Configuration file failed to validate");
 	}
 
-	/* Write our PID to the PID file. */
-	write_pidfile();
-
 	/* Create me */
 	Configuration::Block *block = Config->GetBlock("serverinfo");
 	Me = new Server(NULL, block->Get<const Anope::string>("name"), 0, block->Get<const Anope::string>("description"), block->Get<const Anope::string>("id"));
@@ -454,16 +521,25 @@ void Anope::Init(int ac, char **av)
 	for (int i = 0; i < Config->CountBlock("module"); ++i)
 		ModuleManager::LoadModule(Config->GetBlock("module", i)->Get<const Anope::string>("name"), NULL);
 
+#ifndef _WIN32
+	/* We won't background later, so we should setuid now */
+	if (Anope::NoFork)
+		setuidgid();
+#endif
+
 	Module *protocol = ModuleManager::FindFirstOf(PROTOCOL);
 	if (protocol == NULL)
 		throw CoreException("You must load a protocol module!");
+
+	/* Write our PID to the PID file. */
+	write_pidfile();
 
 	Log() << "Using IRCd protocol " << protocol->name;
 
 	/* Auto assign sid if applicable */
 	if (IRCD->RequiresID)
 	{
-		Anope::string sid = Servers::TS6_SID_Retrieve();
+		Anope::string sid = IRCD->SID_Retrieve();
 		if (Me->GetSID() == Me->GetName())
 			Me->SetSID(sid);
 		for (botinfo_map::iterator it = BotListByNick->begin(), it_end = BotListByNick->end(); it != it_end; ++it)

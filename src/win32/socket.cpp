@@ -1,6 +1,7 @@
- /* POSIX emulation layer for Windows.
+/* POSIX emulation layer for Windows.
  *
- * Copyright (C) 2008-2014 Anope Team <team@anope.org>
+ * (C) 2008-2016 Anope Team
+ * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  */
@@ -51,7 +52,7 @@ int windows_accept(int fd, struct sockaddr *addr, int *addrlen)
  * @param af The protocol type, AF_INET or AF_INET6
  * @param src The address
  * @param dst Struct to put results in
- * @return 1 on sucess, -1 on error
+ * @return 1 on success, -1 on error
  */
 int windows_inet_pton(int af, const char *src, void *dst)
 {

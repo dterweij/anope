@@ -1,5 +1,5 @@
 /*
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -16,7 +16,7 @@ bool WebCPanel::OperServ::Akill::OnRequest(HTTPProvider *server, const Anope::st
 
 	static ServiceReference<XLineManager> akills("XLineManager","xlinemanager/sgline");
 
-	if (!na->nc->IsServicesOper() && !(na->nc->o && na->nc->o->ot && na->nc->o->ot->HasPriv("operserv/akill")))
+	if (!na->nc->o || !na->nc->o->ot->HasCommand("operserv/akill"))
 	{
 		replacements["NOACCESS"];
 	}

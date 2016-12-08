@@ -1,6 +1,6 @@
 /* BotServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -25,15 +25,7 @@ class BotServCore : public Module
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
 		const Anope::string &bsnick = conf->GetModule(this)->Get<const Anope::string>("client");
-
-		if (bsnick.empty())
-			throw ConfigException(Module::name + ": <client> must be defined");
-
-		BotInfo *bi = BotInfo::Find(bsnick, true);
-		if (!bi)
-			throw ConfigException(Module::name + ": no bot named " + bsnick);
-
-		BotServ = bi;
+		BotServ = BotInfo::Find(bsnick, true);
 	}
 
 	void OnSetCorrectModes(User *user, Channel *chan, AccessGroup &access, bool &give_modes, bool &take_modes) anope_override
@@ -64,12 +56,12 @@ class BotServCore : public Module
 		BotInfo *bi = user->server == Me ? dynamic_cast<BotInfo *>(user) : NULL;
 		if (bi && Config->GetModule(this)->Get<bool>("smartjoin"))
 		{
-			std::pair<Channel::ModeList::iterator, Channel::ModeList::iterator> bans = c->GetModeList("BAN");
+			std::vector<Anope::string> bans = c->GetModeList("BAN");
 
 			/* We check for bans */
-			for (; bans.first != bans.second; ++bans.first)
+			for (unsigned int i = 0; i < bans.size(); ++i)
 			{
-				Entry ban("BAN", bans.first->second);
+				Entry ban("BAN", bans[i]);
 				if (ban.Matches(user))
 					c->RemoveMode(NULL, "BAN", ban.GetMask());
 			}
@@ -98,7 +90,7 @@ class BotServCore : public Module
 		{
 			/**
 			 * We let the bot join even if it was an ignored user, as if we don't,
-			 * and the ignored user doesnt just leave, the bot will never
+			 * and the ignored user doesn't just leave, the bot will never
 			 * make it into the channel, leaving the channel botless even for
 			 * legit users - Rob
 			 **/
@@ -117,7 +109,7 @@ class BotServCore : public Module
 		if (c->ci && persist && persist->HasExt(c->ci))
 			return;
 	
-		/* Channel is syncing from a netburst, don't destroy it as more users are probably wanting to join immediatly
+		/* Channel is syncing from a netburst, don't destroy it as more users are probably wanting to join immediately
 		 * We also don't part the bot here either, if necessary we will part it after the sync
 		 */
 		if (c->syncing)
@@ -144,7 +136,7 @@ class BotServCore : public Module
 					"channel, and provide a more convenient way to execute commands. Commands that\n"
 					"require a channel as a parameter will automatically have that parameter\n"
 					"given.\n"), source.service->nick.c_str());
-			const Anope::string &fantasycharacters = Config->GetModule(this)->Get<const Anope::string>("fantasycharacter", "!");
+			const Anope::string &fantasycharacters = Config->GetModule("fantasy")->Get<const Anope::string>("fantasycharacter", "!");
 			if (!fantasycharacters.empty())
 				source.Reply(_(" \n"
 						"Fantasy commands may be prefixed with one of the following characters: %s\n"), fantasycharacters.c_str());
@@ -175,7 +167,7 @@ class BotServCore : public Module
 		source.Reply(_(" \n"
 			"Bot will join a channel whenever there is at least\n"
 			"\002%d\002 user(s) on it."), Config->GetModule(this)->Get<unsigned>("minusers"));
-		const Anope::string &fantasycharacters = Config->GetModule(this)->Get<const Anope::string>("fantasycharacter", "!");
+		const Anope::string &fantasycharacters = Config->GetModule("fantasy")->Get<const Anope::string>("fantasycharacter", "!");
 		if (!fantasycharacters.empty())
 			source.Reply(_("Additionally, if fantasy is enabled fantasy commands\n"
 				"can be executed by prefixing the command name with\n"
@@ -206,7 +198,7 @@ class BotServCore : public Module
 
 	void OnUserKicked(const MessageSource &source, User *target, const Anope::string &channel, ChannelStatus &status, const Anope::string &kickmsg) anope_override
 	{
-		BotInfo *bi = BotInfo::Find(target->nick);
+		BotInfo *bi = BotInfo::Find(target->GetUID());
 		if (bi)
 			/* Bots get rejoined */
 			bi->Join(channel, &status);

@@ -1,6 +1,6 @@
 /* Bahamut functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -16,7 +16,7 @@ class ChannelModeFlood : public ChannelModeParam
  public:
 	ChannelModeFlood(char modeChar, bool minusNoArg) : ChannelModeParam("FLOOD", modeChar, minusNoArg) { }
 
-	bool IsValid(const Anope::string &value) const anope_override
+	bool IsValid(Anope::string &value) const anope_override
 	{
 		try
 		{
@@ -175,7 +175,7 @@ class BahamutIRCdProto : public IRCDProto
 			if (uc != NULL)
 				uc->status.Clear();
 
-			BotInfo *setter = BotInfo::Find(user->nick);
+			BotInfo *setter = BotInfo::Find(user->GetUID());
 			for (size_t i = 0; i < cs.Modes().length(); ++i)
 				c->SetMode(setter, ModeManager::FindChannelModeByChar(cs.Modes()[i]), user->GetUID(), false);
 
@@ -282,7 +282,7 @@ class BahamutIRCdProto : public IRCDProto
 		UplinkSocket::Message() << "SJOIN " << c->creation_time << " " << c->name << " " << modes << " :";
 	}
 
-	void SendLogin(User *u) anope_override
+	void SendLogin(User *u, NickAlias *) anope_override
 	{
 		IRCD->SendMode(Config->GetClient("NickServ"), u, "+d %d", u->signon);
 	}
@@ -328,8 +328,12 @@ struct IRCDMessageMode : IRCDMessage
 			}
 			catch (const ConvertException &) { }
 
+			Anope::string modes = params[2];
+			for (unsigned int i = 3; i < params.size(); ++i)
+				modes += " " + params[i];
+
 			if (c)
-				c->SetModesInternal(source, params[2], ts);
+				c->SetModesInternal(source, modes, ts);
 		}
 		else
 		{
@@ -369,7 +373,7 @@ struct IRCDMessageNick : IRCDMessage
 			Server *s = Server::Find(params[6]);
 			if (s == NULL)
 			{
-				Log(LOG_DEBUG) << "User " << params[0] << " introduced from nonexistant server " << params[6] << "?";
+				Log(LOG_DEBUG) << "User " << params[0] << " introduced from non-existent server " << params[6] << "?";
 				return;
 			}
 
@@ -379,10 +383,15 @@ struct IRCDMessageNick : IRCDMessage
 			if (signon && signon == stamp)
 				na = NickAlias::Find(params[0]);
 
-			new User(params[0], params[4], params[5], "", params[8], s, params[9], signon, params[3], "", na ? *na->nc : NULL);
+			User::OnIntroduce(params[0], params[4], params[5], "", params[8], s, params[9], signon, params[3], "", na ? *na->nc : NULL);
 		}
 		else
-			source.GetUser()->ChangeNick(params[0]);
+		{
+			User *u = source.GetUser();
+
+			if (u)
+				u->ChangeNick(params[0]);
+		}
 	}
 };
 
@@ -440,7 +449,7 @@ struct IRCDMessageSJoin : IRCDMessage
 				sju.second = User::Find(buf);
 				if (!sju.second)
 				{
-					Log(LOG_DEBUG) << "SJOIN for nonexistant user " << buf << " on " << params[1];
+					Log(LOG_DEBUG) << "SJOIN for non-existent user " << buf << " on " << params[1];
 					continue;
 				}
 
@@ -457,11 +466,11 @@ struct IRCDMessageTopic : IRCDMessage
 {
 	IRCDMessageTopic(Module *creator) : IRCDMessage(creator, "TOPIC", 4) { }
 
-	void Run(MessageSource &, const std::vector<Anope::string> &params) anope_override
+	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
 		Channel *c = Channel::Find(params[0]);
 		if (c)
-			c->ChangeTopicInternal(params[1], params[3], Anope::string(params[2]).is_pos_number_only() ? convertTo<time_t>(params[2]) : Anope::CurTime);
+			c->ChangeTopicInternal(source.GetUser(), params[1], params[3], Anope::string(params[2]).is_pos_number_only() ? convertTo<time_t>(params[2]) : Anope::CurTime);
 	}
 };
 
@@ -522,7 +531,7 @@ class ProtoBahamut : public Module
 		ModeManager::AddChannelMode(new ChannelMode("INVITE", 'i'));
 		ModeManager::AddChannelMode(new ChannelModeFlood('f', false));
 		ModeManager::AddChannelMode(new ChannelModeKey('k'));
-		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l'));
+		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l', true));
 		ModeManager::AddChannelMode(new ChannelMode("MODERATED", 'm'));
 		ModeManager::AddChannelMode(new ChannelMode("NOEXTERNAL", 'n'));
 		ModeManager::AddChannelMode(new ChannelMode("PRIVATE", 'p'));

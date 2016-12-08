@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -69,7 +69,7 @@ class CommandOSOper : public Command
 		this->SetDesc(_("View and change Services Operators"));
 		this->SetSyntax(_("ADD \037oper\037 \037type\037"));
 		this->SetSyntax(_("DEL \037oper\037"));
-		this->SetSyntax(_("INFO \037type\037"));
+		this->SetSyntax(_("INFO [\037type\037]"));
 		this->SetSyntax("LIST");
 	}
 
@@ -81,6 +81,12 @@ class CommandOSOper : public Command
 		{
 			const Anope::string &oper = params[1];
 			const Anope::string &otype = params[2];
+
+			if (!source.HasPriv("operserv/oper/modify"))
+			{
+				source.Reply(ACCESS_DENIED);
+				return;
+			}
 
 			const NickAlias *na = NickAlias::Find(oper);
 			if (na == NULL)
@@ -103,6 +109,7 @@ class CommandOSOper : public Command
 				}
 
 				na->nc->o = new MyOper(na->nc->display, ot);
+				na->nc->o->require_oper = true;
 
 				if (Anope::ReadOnly)
 					source.Reply(READ_ONLY_MODE);
@@ -115,6 +122,12 @@ class CommandOSOper : public Command
 		{
 			const Anope::string &oper = params[1];
 
+			if (!source.HasPriv("operserv/oper/modify"))
+			{
+				source.Reply(ACCESS_DENIED);
+				return;
+			}
+
 			const NickAlias *na = NickAlias::Find(oper);
 			if (na == NULL)
 				source.Reply(NICK_X_NOT_REGISTERED, oper.c_str());
@@ -122,6 +135,8 @@ class CommandOSOper : public Command
 				source.Reply(_("Nick \002%s\002 is not a Services Operator."), oper.c_str());
 			else if (!HasPrivs(source, na->nc->o->ot))
 				source.Reply(ACCESS_DENIED);
+			else if (std::find(Config->Opers.begin(), Config->Opers.end(), na->nc->o) != Config->Opers.end())
+				source.Reply(_("Oper \002%s\002 is configured in the configuration file(s) and can not be removed by this command."), na->nc->display.c_str());
 			else
 			{
 				delete na->nc->o;
@@ -154,8 +169,19 @@ class CommandOSOper : public Command
 				}
 			}
 		}
-		else if (subcommand.equals_ci("INFO") && params.size() > 1)
+		else if (subcommand.equals_ci("INFO"))
 		{
+			if (params.size() < 2)
+			{
+				source.Reply(_("Available opertypes:"));
+				for (unsigned i = 0; i < Config->MyOperTypes.size(); ++i)
+				{
+					OperType *ot = Config->MyOperTypes[i];
+					source.Reply("%s", ot->GetName().c_str());
+				}
+				return;
+			}
+
 			Anope::string fulltype = params[1];
 			if (params.size() > 2)
 				fulltype += " " + params[2];
@@ -251,6 +277,15 @@ class OSOper : public Module
 				delete nc->o;
 				nc->o = NULL;
 			}
+		}
+	}
+
+	void OnDelCore(NickCore *nc) anope_override
+	{
+		if (nc->o && dynamic_cast<MyOper *>(nc->o))
+		{
+			delete nc->o;
+			nc->o = NULL;
 		}
 	}
 };

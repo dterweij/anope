@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -64,10 +64,10 @@ class MySessionService : public SessionService
 		for (std::vector<Exception *>::const_iterator it = this->Exceptions->begin(), it_end = this->Exceptions->end(); it != it_end; ++it)
 		{
 			Exception *e = *it;
-			if (Anope::Match(u->host, e->mask) || Anope::Match(u->ip, e->mask))
+			if (Anope::Match(u->host, e->mask) || Anope::Match(u->ip.addr(), e->mask))
 				return e;
 			
-			if (cidr(e->mask).match(sockaddrs(u->ip)))
+			if (cidr(e->mask).match(u->ip))
 				return e;
 		}
 		return NULL;
@@ -109,9 +109,9 @@ class MySessionService : public SessionService
 		return NULL;
 	}
 
-	SessionMap::iterator FindSessionIterator(const Anope::string &ip)
+	SessionMap::iterator FindSessionIterator(const sockaddrs &ip)
 	{
-		cidr c(ip, ip.find(':') != Anope::string::npos ? ipv6_cidr : ipv4_cidr);
+		cidr c(ip, ip.ipv6() ? ipv6_cidr : ipv4_cidr);
 		if (!c.valid())
 			return this->Sessions.end();
 		return this->Sessions.find(c);
@@ -424,44 +424,6 @@ class CommandOSException : public Command
 		return;
 	}
 
-	void DoMove(CommandSource &source, const std::vector<Anope::string> &params)
-	{
-		const Anope::string &n1str = params.size() > 1 ? params[1] : ""; /* From position */
-		const Anope::string &n2str = params.size() > 2 ? params[2] : ""; /* To position */
-		int n1, n2;
-
-		if (n2str.empty())
-		{
-			this->OnSyntaxError(source, "MOVE");
-			return;
-		}
-
-		n1 = n2 = -1;
-		try
-		{
-			n1 = convertTo<int>(n1str);
-			n2 = convertTo<int>(n2str);
-		}
-		catch (const ConvertException &) { }
-
-		if (n1 >= 0 && static_cast<unsigned>(n1) < session_service->GetExceptions().size() && n2 >= 0 && static_cast<unsigned>(n2) < session_service->GetExceptions().size() && n1 != n2)
-		{
-			Exception *temp = session_service->GetExceptions()[n1];
-			session_service->GetExceptions()[n1] = session_service->GetExceptions()[n2];
-			session_service->GetExceptions()[n2] = temp;
-
-			Log(LOG_ADMIN, source, this) << "to move exception " << session_service->GetExceptions()[n1]->mask << " from position " << n1 + 1 << " to position " << n2 + 1;
-			source.Reply(_("Exception for \002%s\002 (#%d) moved to position \002%d\002."), session_service->GetExceptions()[n1]->mask.c_str(), n1 + 1, n2 + 1);
-
-			if (Anope::ReadOnly)
-				source.Reply(READ_ONLY_MODE);
-		}
-		else
-			this->OnSyntaxError(source, "MOVE");
-
-		return;
-	}
-
 	void ProcessList(CommandSource &source, const std::vector<Anope::string> &params, ListFormatter &list)
 	{
 		const Anope::string &mask = params.size() > 1 ? params[1] : "";
@@ -560,7 +522,6 @@ class CommandOSException : public Command
 		this->SetDesc(_("Modify the session-limit exception list"));
 		this->SetSyntax(_("ADD [\037+expiry\037] \037mask\037 \037limit\037 \037reason\037"));
 		this->SetSyntax(_("DEL {\037mask\037 | \037entry-num\037 | \037list\037}"));
-		this->SetSyntax(_("MOVE \037num\037 \037position\037"));
 		this->SetSyntax(_("LIST [\037mask\037 | \037list\037]"));
 		this->SetSyntax(_("VIEW [\037mask\037 | \037list\037]"));
 	}
@@ -575,8 +536,6 @@ class CommandOSException : public Command
 			return this->DoAdd(source, params);
 		else if (cmd.equals_ci("DEL"))
 			return this->DoDel(source, params);
-		else if (cmd.equals_ci("MOVE"))
-			return this->DoMove(source, params);
 		else if (cmd.equals_ci("LIST"))
 			return this->DoList(source, params);
 		else if (cmd.equals_ci("VIEW"))
@@ -610,9 +569,6 @@ class CommandOSException : public Command
 				" \n"
 				"\002EXCEPTION DEL\002 removes the given mask from the exception list.\n"
 				" \n"
-				"\002EXCEPTION MOVE\002 moves exception \037num\037 to \037position\037. The\n"
-				"sessions inbetween will be shifted up or down to fill the gap.\n"
-				" \n"
 				"\002EXCEPTION LIST\002 and \002EXCEPTION VIEW\002 show all current\n"
 				"sessions if the optional mask is given, the list is limited\n"
 				"to those sessions matching the mask. The difference is that\n"
@@ -639,7 +595,10 @@ class OSSession : public Module
 		exception_type("Exception", Exception::Unserialize), ss(this), commandossession(this), commandosexception(this), akills("XLineManager", "xlinemanager/sgline")
 	{
 		this->SetPermanent(true);
+	}
 
+	void Prioritize() anope_override
+	{
 		ModuleManager::SetPriority(this, PRIORITY_FIRST);
 	}
 
@@ -668,7 +627,7 @@ class OSSession : public Module
 		if (u->Quitting() || !session_limit || exempt || !u->server || u->server->IsULined())
 			return;
 
-		cidr u_ip(u->ip);
+		cidr u_ip(u->ip, u->ip.ipv6() ? ipv6_cidr : ipv4_cidr);
 		if (!u_ip.valid())
 			return;
 
@@ -705,7 +664,7 @@ class OSSession : public Module
 				{
 					if (!sle_reason.empty())
 					{
-						Anope::string message = sle_reason.replace_all_cs("%IP%", u->ip);
+						Anope::string message = sle_reason.replace_all_cs("%IP%", u->ip.addr());
 						u->SendMessage(OperServ, message);
 					}
 					if (!sle_detailsloc.empty())
@@ -713,9 +672,10 @@ class OSSession : public Module
 				}
 
 				++session->hits;
-				if (max_session_kill && session->hits >= max_session_kill && akills)
+
+				const Anope::string &akillmask = "*@" + session->addr.mask();
+				if (max_session_kill && session->hits >= max_session_kill && akills && !akills->HasEntry(akillmask))
 				{
-					const Anope::string &akillmask = "*@" + session->addr.mask();
 					XLine *x = new XLine(akillmask, OperServ ? OperServ->nick : "", Anope::CurTime + session_autokill_expiry, "Session limit exceeded", XLineManager::GenerateUID());
 					akills->AddXLine(x);
 					akills->Send(NULL, x);
@@ -723,13 +683,13 @@ class OSSession : public Module
 				}
 				else
 				{
-					u->Kill(OperServ ? OperServ->nick : "", "Session limit exceeded");
+					u->Kill(OperServ, "Session limit exceeded");
 				}
 			}
 		}
 		else
 		{
-			session = new Session(u->ip, u->ip.find(':') != Anope::string::npos ? ipv6_cidr : ipv4_cidr);
+			session = new Session(u->ip, u->ip.ipv6() ? ipv6_cidr : ipv4_cidr);
 		}
 	}
 
@@ -767,7 +727,7 @@ class OSSession : public Module
 			if (!e->expires || e->expires > Anope::CurTime)
 				continue;
 			BotInfo *OperServ = Config->GetClient("OperServ");
-			Log(OperServ, "expire/exception") << "Session exception for " << e->mask << "has expired.";
+			Log(OperServ, "expire/exception") << "Session exception for " << e->mask << " has expired.";
 			this->ss.DelException(e);
 			delete e;
 		}

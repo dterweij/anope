@@ -1,6 +1,6 @@
 /* HostServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -221,7 +221,8 @@ class HSSet : public Module
  public:
 	HSSet(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR), commandhsset(this), commandhssetall(this)
 	{
-
+		if (!IRCD || !IRCD->CanSetVHost)
+			throw ModuleException("Your IRCd does not support vhosts");
 	}
 };
 

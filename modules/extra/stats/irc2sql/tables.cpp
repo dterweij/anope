@@ -17,7 +17,7 @@ void IRC2SQL::CheckTables()
 
 	this->GetTables();
 
-	if (UseGeoIP && GeoIPDB.equals_ci("country") && !this->HasTable(prefix + "geoip_country"))
+	if (GeoIPDB.equals_ci("country") && !this->HasTable(prefix + "geoip_country"))
 	{
 		query = "CREATE TABLE `" + prefix + "geoip_country` ("
 			"`start` INT UNSIGNED NOT NULL,"
@@ -29,7 +29,7 @@ void IRC2SQL::CheckTables()
 			") ENGINE=MyISAM DEFAULT CHARSET=utf8;";
 		this->RunQuery(query);
 	}
-	if (UseGeoIP && GeoIPDB.equals_ci("city") && !this->HasTable(prefix + "geoip_city_blocks"))
+	if (GeoIPDB.equals_ci("city") && !this->HasTable(prefix + "geoip_city_blocks"))
 	{
 		query = "CREATE TABLE `" + prefix + "geoip_city_blocks` ("
 			"`start` INT UNSIGNED NOT NULL,"
@@ -41,7 +41,7 @@ void IRC2SQL::CheckTables()
 		this->RunQuery(query);
 
 	}
-	if (UseGeoIP && GeoIPDB.equals_ci("city") && !this->HasTable(prefix + "geoip_city_location"))
+	if (GeoIPDB.equals_ci("city") && !this->HasTable(prefix + "geoip_city_location"))
 	{
 		query = "CREATE TABLE `" + prefix + "geoip_city_location` ("
 			"`locId` INT UNSIGNED NOT NULL,"
@@ -55,7 +55,7 @@ void IRC2SQL::CheckTables()
 			") ENGINE=MyISAM DEFAULT CHARSET=utf8;";
 		this->RunQuery(query);
 	}
-	if (UseGeoIP && GeoIPDB.equals_ci("city") && !this->HasTable(prefix + "geoip_city_region"))
+	if (GeoIPDB.equals_ci("city") && !this->HasTable(prefix + "geoip_city_region"))
 	{	query = "CREATE TABLE `" + prefix + "geoip_city_region` ("
 			"`country` CHAR(2) NOT NULL,"
 			"`region` CHAR(2) NOT NULL,"
@@ -73,8 +73,8 @@ void IRC2SQL::CheckTables()
 			"`comment` varchar(255) NOT NULL,"
 			"`link_time` datetime DEFAULT NULL,"
 			"`split_time` datetime DEFAULT NULL,"
-			"`version` varchar(127) NOT NULL,"
-			"`currentusers` int(15) NOT NULL,"
+			"`version` varchar(127) DEFAULT NULL,"
+			"`currentusers` int(15) DEFAULT 0,"
 			"`online` enum('Y','N') NOT NULL DEFAULT 'Y',"
 			"`ulined` enum('Y','N') NOT NULL DEFAULT 'N',"
 			"PRIMARY KEY (`id`),"
@@ -87,8 +87,7 @@ void IRC2SQL::CheckTables()
 		query = "CREATE TABLE `" + prefix + "chan` ("
 			"`chanid` int(11) UNSIGNED NOT NULL AUTO_INCREMENT,"
 			"`channel` varchar(255) NOT NULL,"
-			"`currentusers` int(15) NOT NULL DEFAULT 0,"
-			"`topic` varchar(255) DEFAULT NULL,"
+			"`topic` varchar(512) DEFAULT NULL,"
 			"`topicauthor` varchar(255) DEFAULT NULL,"
 			"`topictime` datetime DEFAULT NULL,"
 			"`modes` varchar(512) DEFAULT NULL,"
@@ -157,10 +156,8 @@ void IRC2SQL::CheckTables()
 	if (this->HasProcedure(prefix + "UserConnect"))
 		this->RunQuery(SQL::Query("DROP PROCEDURE " + prefix + "UserConnect"));
 
-	if (UseGeoIP)
-	{
-		if (GeoIPDB.equals_ci("country"))
-			geoquery = "UPDATE `" + prefix + "user` AS u "
+	if (GeoIPDB.equals_ci("country"))
+		geoquery = "UPDATE `" + prefix + "user` AS u "
 					"JOIN ( SELECT `countrycode`, `countryname` "
 						"FROM `" + prefix + "geoip_country` "
 						"WHERE INET_ATON(ip_) <= `end` "
@@ -168,8 +165,8 @@ void IRC2SQL::CheckTables()
 						"ORDER BY `end` ASC LIMIT 1 ) as c "
 					"SET u.geocode = c.countrycode, u.geocountry = c.countryname "
 					"WHERE u.nick = nick_; ";
-		else if (GeoIPDB.equals_ci("city"))
-			geoquery = "UPDATE `" + prefix + "user` as u "
+	else if (GeoIPDB.equals_ci("city"))
+		geoquery = "UPDATE `" + prefix + "user` as u "
 					"JOIN ( SELECT * FROM `" + prefix + "geoip_city_location` "
 						"WHERE `locID` = ( SELECT `locID` "
 								"FROM `" + prefix + "geoip_city_blocks` "
@@ -185,7 +182,7 @@ void IRC2SQL::CheckTables()
 								"WHERE `country` = l.country "
 								"AND `region` = l.region )"
 					"WHERE u.nick = nick_;";
-	}
+
 	query = "CREATE PROCEDURE `" + prefix + "UserConnect`"
 		"(nick_ varchar(255), host_ varchar(255), vhost_ varchar(255), "
 		"chost_ varchar(255), realname_ varchar(255), ip_ varchar(255), "
@@ -232,47 +229,6 @@ void IRC2SQL::CheckTables()
 	query = "CREATE PROCEDURE " + prefix + "ServerQuit(sname_ varchar(255)) "
 		"BEGIN "
 			/* 1.
-			 * loop through all channels and decrease the user count
-			 * by the number of users that are on this channel AND
-			 * on the splitting server
-			 *
-			 * we dont have to care about channels that get empty, there will be
-			 * an extra OnChannelDelete event triggered from anope.
-			 */
-			"DECLARE no_more_rows BOOLEAN DEFAULT FALSE;"
-			"DECLARE channel_ varchar(255);"
-			"DECLARE ucount_ int;"
-			"DECLARE channel_cursor CURSOR FOR "
-				"SELECT c.channel "
-				"FROM `" + prefix + "chan` as c, `" + prefix + "ison` as i, "
-					"`" + prefix + "user` as u, `" + prefix + "server` as s "
-				"WHERE c.chanid = i.chanid "
-				  "AND i.nickid = u.nickid "
-				  "AND u.servid = s.id "
-				  "AND s.name = sname_;"
-			"DECLARE CONTINUE HANDLER FOR NOT FOUND "
-				"SET no_more_rows = TRUE;"
-			"OPEN channel_cursor;"
-			"the_loop: LOOP "
-				"FETCH channel_cursor INTO channel_;"
-				"IF no_more_rows THEN "
-					"CLOSE channel_cursor;"
-					"LEAVE the_loop;"
-				"END IF;"
-				"SELECT COUNT(*) INTO ucount_ "
-				"FROM `" + prefix + "ison` AS i, `" + prefix + "chan` AS c,"
-					"`" + prefix + "user` AS u, `" + prefix + "server` AS s "
-				"WHERE i.nickid = u.nickid "
-				  "AND u.servid = s.id "
-				  "AND i.chanid = c.chanid "
-				  "AND c.channel = channel_ "
-				  "AND s.name = sname_; "
-				"UPDATE `" + prefix + "chan` "
-				"SET currentusers = currentusers - ucount_ "
-				"WHERE channel = channel_;"
-			"END LOOP;"
-
-			/* 2.
 			 * remove all users on the splitting server from the ison table
 			 */
 			"DELETE i FROM `" + prefix + "ison` AS i "
@@ -282,7 +238,7 @@ void IRC2SQL::CheckTables()
 				  "AND u.servid = s.id "
 				  "AND s.name = sname_;"
 
-			/* 3.
+			/* 2.
 			 * remove all users on the splitting server from the user table
 			 */
 			"DELETE u FROM `" + prefix + "user` AS u "
@@ -290,7 +246,7 @@ void IRC2SQL::CheckTables()
 				"WHERE s.id = u.servid "
 				  "AND s.name = sname_;"
 
-			/* 4.
+			/* 3.
 			 * on the splitting server, set usercount = 0, split_time = now(), online = 'N'
 			 */
 			"UPDATE `" + prefix + "server` SET currentusers = 0, split_time = now(), online = 'N' "
@@ -308,12 +264,6 @@ void IRC2SQL::CheckTables()
 			"UPDATE `" + prefix + "user` AS `u`, `" + prefix + "server` AS `s` "
 				"SET s.currentusers = s.currentusers - 1 "
 				"WHERE u.nick=nick_ AND u.servid = s.id; "
-			/* decrease the usercount on all channels where the user was on */
-			"UPDATE `" + prefix + "user` AS u, `" + prefix + "ison` AS i, "
-				"`" + prefix + "chan` AS c "
-				"SET c.currentusers = c.currentusers - 1 "
-				"WHERE u.nick=nick_ AND u.nickid = i.nickid "
-				"AND i.chanid = c.chanid; "
 			/* remove from all channels where the user was on */
 			"DELETE i FROM `" + prefix + "ison` AS i "
 				"INNER JOIN `" + prefix + "user` as u "
@@ -347,9 +297,9 @@ void IRC2SQL::CheckTables()
 				"SELECT u.nickid, c.chanid, modes_ "
 				"FROM " + prefix + "user AS u, " + prefix + "chan AS c "
 				"WHERE u.nick=nick_ AND c.channel=channel_;"
-			"UPDATE `" + prefix + "chan` SET currentusers=currentusers+1 "
-				"WHERE channel=channel_;"
-			"SELECT `currentusers` INTO cur FROM `" + prefix + "chan` WHERE channel=channel_;"
+			"SELECT count(i.chanid) INTO cur "
+				"FROM `" + prefix + "chan` AS c, " +  prefix + "ison AS i "
+				"WHERE i.chanid = c.chanid AND c.channel=channel_;"
 			"SELECT `maxusers` INTO max FROM `" + prefix + "maxusers` WHERE name=channel_;"
 			"IF found_rows() AND cur <= max THEN "
 				"UPDATE `" + prefix + "maxusers` SET lastused=now() WHERE name=channel_;"
@@ -375,8 +325,6 @@ void IRC2SQL::CheckTables()
 					"AND u.nick = nick_ "
 					"AND i.chanid = c.chanid "
 					"AND c.channel = channel_;"
-			"UPDATE `" + prefix + "chan` SET currentusers=currentusers-1 "
-				"WHERE channel=channel_;"
 		"END";
 	this->RunQuery(query);
 }

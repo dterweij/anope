@@ -1,6 +1,6 @@
 /* NickServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -196,7 +196,7 @@ class NSAccess : public Module
 	{
 	}
 
-	void OnNickRegister(User *u, NickAlias *na) anope_override
+	void OnNickRegister(User *u, NickAlias *na, const Anope::string &) anope_override
 	{
 		if (u && Config->GetModule(this)->Get<bool>("addaccessonreg"))
 			na->nc->AddAccess(u->Mask());

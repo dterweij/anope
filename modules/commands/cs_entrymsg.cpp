@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,27 +10,27 @@
  */
 
 #include "module.h"
+#include "modules/cs_entrymsg.h"
 
-struct EntryMsg : Serializable
+struct EntryMsgImpl : EntryMsg, Serializable
 {
-	Serialize::Reference<ChannelInfo> ci;
-	Anope::string creator;
-	Anope::string message;
-	time_t when;
-
-	EntryMsg(ChannelInfo *c, const Anope::string &cname, const Anope::string &cmessage, time_t ct = Anope::CurTime) : Serializable("EntryMsg")
+	EntryMsgImpl() : Serializable("EntryMsg")
 	{
-		this->ci = c;
+	}
+
+	EntryMsgImpl(ChannelInfo *c, const Anope::string &cname, const Anope::string &cmessage, time_t ct = Anope::CurTime) : Serializable("EntryMsg")
+	{
+		this->chan = c->name;
 		this->creator = cname;
 		this->message = cmessage;
 		this->when = ct;
 	}
 
-	~EntryMsg();
+	~EntryMsgImpl();
 
 	void Serialize(Serialize::Data &data) const anope_override
 	{
-		data["ci"] << this->ci->name;
+		data["ci"] << this->chan;
 		data["creator"] << this->creator;
 		data["message"] << this->message;
 		data.SetType("when", Serialize::Data::DT_INT); data["when"] << this->when;
@@ -39,30 +39,33 @@ struct EntryMsg : Serializable
 	static Serializable* Unserialize(Serializable *obj, Serialize::Data &data);
 };
 
-struct EntryMessageList : Serialize::Checker<std::vector<EntryMsg *> >
+struct EntryMessageListImpl : EntryMessageList
 {
-	EntryMessageList(Extensible *) : Serialize::Checker<std::vector<EntryMsg *> >("EntryMsg") { }
+	EntryMessageListImpl(Extensible *) { }
 
-	~EntryMessageList()
+	EntryMsg* Create() anope_override
 	{
-		for (unsigned i = (*this)->size(); i > 0; --i)
-			delete (*this)->at(i - 1);
+		return new EntryMsgImpl();
 	}
 };
 
-EntryMsg::~EntryMsg()
+EntryMsgImpl::~EntryMsgImpl()
 {
+	ChannelInfo *ci = ChannelInfo::Find(this->chan);
+	if (!ci)
+		return;
+
 	EntryMessageList *messages = ci->GetExt<EntryMessageList>("entrymsg");
-	if (messages)
-	{
-		std::vector<EntryMsg *>::iterator it = std::find((*messages)->begin(), (*messages)->end(), this);
-		if (it != (*messages)->end())
-			(*messages)->erase(it);
-	}
+	if (!messages)
+		return;
+
+	std::vector<EntryMsg *>::iterator it = std::find((*messages)->begin(), (*messages)->end(), this);
+	if (it != (*messages)->end())
+		(*messages)->erase(it);
 }
 
 
-Serializable* EntryMsg::Unserialize(Serializable *obj, Serialize::Data &data)
+Serializable* EntryMsgImpl::Unserialize(Serializable *obj, Serialize::Data &data)
 {
 	Anope::string sci, screator, smessage;
 	time_t swhen;
@@ -77,8 +80,8 @@ Serializable* EntryMsg::Unserialize(Serializable *obj, Serialize::Data &data)
 
 	if (obj)
 	{
-		EntryMsg *msg = anope_dynamic_static_cast<EntryMsg *>(obj);
-		msg->ci = ci;
+		EntryMsgImpl *msg = anope_dynamic_static_cast<EntryMsgImpl *>(obj);
+		msg->chan = ci->name;
 		data["creator"] >> msg->creator;
 		data["message"] >> msg->message;
 		data["when"] >> msg->when;
@@ -89,7 +92,7 @@ Serializable* EntryMsg::Unserialize(Serializable *obj, Serialize::Data &data)
 
 	data["when"] >> swhen;
 
-	EntryMsg *m = new EntryMsg(ci, screator, smessage, swhen);
+	EntryMsgImpl *m = new EntryMsgImpl(ci, screator, smessage, swhen);
 	(*messages)->push_back(m);
 	return m;
 }
@@ -139,8 +142,8 @@ class CommandEntryMessage : public Command
 			source.Reply(_("The entry message list for \002%s\002 is full."), ci->name.c_str());
 		else
 		{
-			(*messages)->push_back(new EntryMsg(ci, source.GetNick(), message));
-			Log(source.IsFounder(ci) ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to add a message";
+			(*messages)->push_back(new EntryMsgImpl(ci, source.GetNick(), message));
+			Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to add a message";
 			source.Reply(_("Entry message added to \002%s\002"), ci->name.c_str());
 		}
 	}
@@ -163,7 +166,7 @@ class CommandEntryMessage : public Command
 					delete (*messages)->at(i - 1);
 					if ((*messages)->empty())
 						ci->Shrink<EntryMessageList>("entrymsg");
-					Log(source.IsFounder(ci) ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to remove a message";
+					Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to remove a message";
 					source.Reply(_("Entry message \002%i\002 for \002%s\002 deleted."), i, ci->name.c_str());
 				}
 				else
@@ -180,7 +183,7 @@ class CommandEntryMessage : public Command
 	{
 		ci->Shrink<EntryMessageList>("entrymsg");
 
-		Log(source.IsFounder(ci) ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to remove all messages";
+		Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to remove all messages";
 		source.Reply(_("Entry messages for \002%s\002 have been cleared."), ci->name.c_str());
 	}
 
@@ -209,7 +212,7 @@ class CommandEntryMessage : public Command
 			return;
 		}
 
-		if (!source.IsFounder(ci) && !source.HasPriv("chanserv/administration"))
+		if (!source.AccessFor(ci).HasPriv("SET") && !source.HasPriv("chanserv/administration"))
 		{
 			source.Reply(ACCESS_DENIED);
 			return;
@@ -236,20 +239,23 @@ class CommandEntryMessage : public Command
 		source.Reply(_("Controls what messages will be sent to users when they join the channel."));
 		source.Reply(" ");
 		source.Reply(_("The \002ENTRYMSG ADD\002 command adds the given message to\n"
-				"the list of messages to be shown to users when they join\n"
+				"the list of messages shown to users when they join\n"
 				"the channel."));
 		source.Reply(" ");
-		source.Reply(_("The \002ENTRYMSG DEL\002 command removes the given message from\n"
-				"the list of messages to be shown to users when they join\n"
-				"the channel. You can remove the message by specifying its number\n"
+		source.Reply(_("The \002ENTRYMSG DEL\002 command removes the specified message from\n"
+				"the list of messages shown to users when they join\n"
+				"the channel. You can remove a message by specifying its number\n"
 				"which you can get by listing the messages as explained below."));
 		source.Reply(" ");
 		source.Reply(_("The \002ENTRYMSG LIST\002 command displays a listing of messages\n"
-				"to be shown to users when they join the channel."));
+				"shown to users when they join the channel."));
 		source.Reply(" ");
 		source.Reply(_("The \002ENTRYMSG CLEAR\002 command clears all entries from\n"
-				"the list of messages to be shown to users when they join\n"
+				"the list of messages shown to users when they join\n"
 				"the channel, effectively disabling entry messages."));
+		source.Reply(" ");
+		source.Reply(_("Adding, deleting, or clearing entry messages requires the\n"
+				"SET permission."));
 		return true;
 	}
 };
@@ -257,13 +263,13 @@ class CommandEntryMessage : public Command
 class CSEntryMessage : public Module
 {
 	CommandEntryMessage commandentrymsg;
-	ExtensibleItem<EntryMessageList> eml;
+	ExtensibleItem<EntryMessageListImpl> eml;
 	Serialize::Type entrymsg_type;
 
  public:
 	CSEntryMessage(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
 	commandentrymsg(this),
-	eml(this, "entrymsg"), entrymsg_type("EntryMsg", EntryMsg::Unserialize)
+	eml(this, "entrymsg"), entrymsg_type("EntryMsg", EntryMsgImpl::Unserialize)
 	{
 	}
 

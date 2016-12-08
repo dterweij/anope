@@ -1,6 +1,6 @@
 /* Charybdis IRCD functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -11,8 +11,8 @@
 
 #include "module.h"
 #include "modules/cs_mode.h"
+#include "modules/sasl.h"
 
-static bool sasl = true;
 static Anope::string UplinkSID;
 
 static ServiceReference<IRCDProto> ratbox("IRCDProto", "ratbox");
@@ -32,12 +32,14 @@ class ChannelModeLargeBan : public ChannelMode
 class CharybdisProto : public IRCDProto
 {
  public:
+	
 	CharybdisProto(Module *creator) : IRCDProto(creator, "Charybdis 3.4+")
 	{
 		DefaultPseudoclientModes = "+oiS";
 		CanCertFP = true;
 		CanSNLine = true;
 		CanSQLine = true;
+		CanSQLineChannel = true;
 		CanSZLine = true;
 		CanSVSNick = true;
 		CanSVSHold = true;
@@ -54,16 +56,26 @@ class CharybdisProto : public IRCDProto
 	void SendSGLineDel(const XLine *x) anope_override { ratbox->SendSGLineDel(x); }
 	void SendAkill(User *u, XLine *x) anope_override { ratbox->SendAkill(u, x); }
 	void SendAkillDel(const XLine *x) anope_override { ratbox->SendAkillDel(x); }
+	void SendSQLine(User *u, const XLine *x) anope_override { ratbox->SendSQLine(u, x); }
 	void SendSQLineDel(const XLine *x) anope_override { ratbox->SendSQLineDel(x); }
 	void SendJoin(User *user, Channel *c, const ChannelStatus *status) anope_override { ratbox->SendJoin(user, c, status); }
 	void SendServer(const Server *server) anope_override { ratbox->SendServer(server); }
 	void SendChannel(Channel *c) anope_override { ratbox->SendChannel(c); }
 	void SendTopic(const MessageSource &source, Channel *c) anope_override { ratbox->SendTopic(source, c); }
 	bool IsIdentValid(const Anope::string &ident) anope_override { return ratbox->IsIdentValid(ident); }
+	void SendLogin(User *u, NickAlias *na) anope_override { ratbox->SendLogin(u, na); }
+	void SendLogout(User *u) anope_override { ratbox->SendLogout(u); }
 
-	void SendSQLine(User *, const XLine *x) anope_override
+	void SendSASLMechanisms(std::vector<Anope::string> &mechanisms) anope_override
 	{
-		UplinkSocket::Message(Me) << "RESV * " << x->mask << " :" << x->GetReason();
+		Anope::string mechlist;
+		
+		for (unsigned i = 0; i < mechanisms.size(); ++i)
+		{
+			mechlist += "," + mechanisms[i];
+		}
+		
+		UplinkSocket::Message(Me) << "ENCAP * MECHLIST :" << (mechanisms.empty() ? "" : mechlist.substr(1));
 	}
 
 	void SendConnect() anope_override
@@ -113,19 +125,6 @@ class CharybdisProto : public IRCDProto
 		UplinkSocket::Message(Me) << "EUID " << u->nick << " 1 " << u->timestamp << " " << modes << " " << u->GetIdent() << " " << u->host << " 0 " << u->GetUID() << " * * :" << u->realname;
 	}
 
-	void SendLogin(User *u) anope_override
-	{
-		if (!u->Account())
-			return;
-
-		UplinkSocket::Message(Me) << "ENCAP * SU " << u->GetUID() << " " << u->Account()->display;
-	}
-
-	void SendLogout(User *u) anope_override
-	{
-		UplinkSocket::Message(Me) << "ENCAP * SU " << u->GetUID();
-	}
-
 	void SendForceNickChange(User *u, const Anope::string &newnick, time_t when) anope_override
 	{
 		UplinkSocket::Message(Me) << "ENCAP " << u->server->GetName() << " RSFNC " << u->GetUID()
@@ -151,29 +150,50 @@ class CharybdisProto : public IRCDProto
 	{
 		this->SendVhost(u, "", u->host);
 	}
+
+	void SendSASLMessage(const SASL::Message &message) anope_override
+	{
+		Server *s = Server::Find(message.target.substr(0, 3));
+		UplinkSocket::Message(Me) << "ENCAP " << (s ? s->GetName() : message.target.substr(0, 3)) << " SASL " << message.source << " " << message.target << " " << message.type << " " << message.data << (message.ext.empty() ? "" : (" " + message.ext));
+	}
+
+	void SendSVSLogin(const Anope::string &uid, const Anope::string &acc, const Anope::string &vident, const Anope::string &vhost) anope_override
+	{
+		Server *s = Server::Find(uid.substr(0, 3));
+		UplinkSocket::Message(Me) << "ENCAP " << (s ? s->GetName() : uid.substr(0, 3)) << " SVSLOGIN " << uid << " * " << (!vident.empty() ? vident : '*') << " " << (!vhost.empty() ? vhost : '*') << " " << acc;
+	}
 };
 
 
 struct IRCDMessageEncap : IRCDMessage
 {
-	IRCDMessageEncap(Module *creator) : IRCDMessage(creator, "ENCAP", 3) { SetFlag(IRCDMESSAGE_SOFT_LIMIT);}
+	IRCDMessageEncap(Module *creator) : IRCDMessage(creator, "ENCAP", 3)
+	{
+		SetFlag(IRCDMESSAGE_SOFT_LIMIT);
+	}
 
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		User *u = source.GetUser();
-
 		// In a burst, states that the source user is logged in as the account.
 		if (params[1] == "LOGIN" || params[1] == "SU")
 		{
+			User *u = source.GetUser();
 			NickCore *nc = NickCore::Find(params[2]);
-			if (!nc)
+
+			if (!u || !nc)
 				return;
+
 			u->Login(nc);
 		}
 		// Received: :42XAAAAAE ENCAP * CERTFP :3f122a9cc7811dbad3566bf2cec3009007c0868f
-		if (params[1] == "CERTFP")
+		else if (params[1] == "CERTFP")
 		{
+			User *u = source.GetUser();
+			if (!u)
+				return;
+
 			u->fingerprint = params[2];
+
 			FOREACH_MOD(OnFingerprint, (u));
 		}
 		/*
@@ -187,82 +207,16 @@ struct IRCDMessageEncap : IRCDMessage
 		 *
 		 * Charybdis only accepts messages from SASL agents; these must have umode +S
 		 */
-		if (params[1] == "SASL" && sasl && params.size() == 6)
+		else if (params[1] == "SASL" && SASL::sasl && params.size() >= 6)
 		{
-			class CharybdisSASLIdentifyRequest : public IdentifyRequest
-			{
-				Anope::string uid;
-				MessageSource msource;
+			SASL::Message m;
+			m.source = params[2];
+			m.target = params[3];
+			m.type = params[4];
+			m.data = params[5];
+			m.ext = params.size() > 6 ? params[6] : "";
 
-			 public:
-				CharybdisSASLIdentifyRequest(Module *m, MessageSource &source_, const Anope::string &id, const Anope::string &acc, const Anope::string &pass) : IdentifyRequest(m, acc, pass), uid(id), msource(source_) { }
-
-				void OnSuccess() anope_override
-				{
-					BotInfo *NickServ = Config->GetClient("NickServ");
-					if (!NickServ)
-						return;
-
-					/* SVSLOGIN
-					 * parameters: target, new nick, new username, new visible hostname, new login name
-					 * Sent after successful SASL authentication.
-					 * The target is a UID, typically an unregistered one.
-					 * Any of the "new" parameters can be '*' to leave the corresponding field
-					 * unchanged. The new login name can be '0' to log the user out.
-					 * If the UID is registered on the network, a SIGNON with the changes will be
-					 * broadcast, otherwise the changes will be stored, to be used when registration
-					 * completes.
-					 */
-					UplinkSocket::Message(Me) << "ENCAP " << msource.GetName() << " SVSLOGIN " << this->uid << " * * * " << this->GetAccount();
-					UplinkSocket::Message(Me) << "ENCAP " << msource.GetName() << " SASL " << NickServ->GetUID() << " " << this->uid << " D S";
-				}
-
-				void OnFail() anope_override
-				{
-					BotInfo *NickServ = Config->GetClient("NickServ");
-					if (!NickServ)
-						return;
-
-					UplinkSocket::Message(Me) << "ENCAP " << msource.GetName() << " SASL " << NickServ->GetUID() << " " << this->uid << " " << " D F";
-
-					Log(NickServ) << "A user failed to identify for account " << this->GetAccount() << " using SASL";
-				}
-			};
-			if (params[4] == "S")
-			{
-				BotInfo *NickServ = Config->GetClient("NickServ");
-				if (!NickServ)
-					return;
-
-				if (params[5] == "PLAIN")
-					UplinkSocket::Message(Me) << "ENCAP " << source.GetName() << " SASL " << NickServ->GetUID() << " " << params[2] << " C +";
-				else
-					UplinkSocket::Message(Me) << "ENCAP " << source.GetName() << " SASL " << NickServ->GetUID() << " " << params[2] << " D F";
-			}
-			else if (params[4] == "C")
-			{
-				Anope::string decoded;
-				Anope::B64Decode(params[5], decoded);
-
-				size_t p = decoded.find('\0');
-				if (p == Anope::string::npos)
-					return;
-				decoded = decoded.substr(p + 1);
-
-				p = decoded.find('\0');
-				if (p == Anope::string::npos)
-					return;
-
-				Anope::string acc = decoded.substr(0, p),
-					pass = decoded.substr(p + 1);
-
-				if (acc.empty() || pass.empty())
-					return;
-
-				IdentifyRequest *req = new CharybdisSASLIdentifyRequest(this->owner, source, params[2], acc, pass);
-				FOREACH_MOD(OnCheckAuthentication, (NULL, req));
-				req->Dispatch();
-			}
+			SASL::sasl->ProcessMessage(m);
 		}
 	}
 };
@@ -290,11 +244,11 @@ struct IRCDMessageEUID : IRCDMessage
 		if (params[9] != "*")
 			na = NickAlias::Find(params[9]);
 
-		new User(params[0], params[4], params[8], params[5], params[6], source.GetServer(), params[10], params[2].is_pos_number_only() ? convertTo<time_t>(params[2]) : Anope::CurTime, params[3], params[7], na ? *na->nc : NULL);
+		User::OnIntroduce(params[0], params[4], (params[8] != "*" ? params[8] : params[5]), params[5], params[6], source.GetServer(), params[10], params[2].is_pos_number_only() ? convertTo<time_t>(params[2]) : Anope::CurTime, params[3], params[7], na ? *na->nc : NULL);
 	}
 };
 
-// we cant use this function from ratbox because we set a local variable here
+// we can't use this function from ratbox because we set a local variable here
 struct IRCDMessageServer : IRCDMessage
 {
 	IRCDMessageServer(Module *creator) : IRCDMessage(creator, "SERVER", 3) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
@@ -310,7 +264,7 @@ struct IRCDMessageServer : IRCDMessage
 	}
 };
 
-// we cant use this function from ratbox because we set a local variable here
+// we can't use this function from ratbox because we set a local variable here
 struct IRCDMessagePass : IRCDMessage
 {
 	IRCDMessagePass(Module *creator) : IRCDMessage(creator, "PASS", 4) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
@@ -351,7 +305,7 @@ class ProtoCharybdis : public Module
 
 	/* Ratbox Message Handlers */
 	ServiceAlias message_bmask, message_join, message_nick, message_pong, message_sid, message_sjoin,
-		message_tb, message_tmode;
+		message_tb, message_tmode, message_uid;
 
 	/* Our message handlers */
 	IRCDMessageEncap message_encap;
@@ -401,6 +355,7 @@ class ProtoCharybdis : public Module
 		message_sjoin("IRCDMessage", "charybdis/sjoin", "ratbox/sjoin"),
 		message_tb("IRCDMessage", "charybdis/tb", "ratbox/tb"),
 		message_tmode("IRCDMessage", "charybdis/tmode", "ratbox/tmode"),
+		message_uid("IRCDMessage", "charybdis/uid", "ratbox/uid"),
 
 		message_encap(this), message_euid(this), message_pass(this), message_server(this)
 
@@ -427,7 +382,6 @@ class ProtoCharybdis : public Module
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
 		use_server_side_mlock = conf->GetModule(this)->Get<bool>("use_server_side_mlock");
-		sasl = conf->GetModule(this)->Get<bool>("sasl");
 	}
 
 	void OnChannelSync(Channel *c) anope_override

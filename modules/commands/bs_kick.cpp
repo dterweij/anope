@@ -1,14 +1,12 @@
 /* BotServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
  *
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
- *
- *
  */
 
 #include "module.h"
@@ -230,12 +228,12 @@ class CommandBSKickBase : public Command
 				source.Reply(_("Bot will now kick for \002%s\002."), optname.c_str());
 
 			bool override = !source.AccessFor(ci).HasPriv("SET");
-			Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to enable the " << optname << "kicker";
+			Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to enable the " << optname << " kicker";
 		}
 		else if (param.equals_ci("OFF"))
 		{
 			bool override = !source.AccessFor(ci).HasPriv("SET");
-			Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to disable the " << optname << "kicker";
+			Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to disable the " << optname << " kicker";
 
 			val = false;
 			source.Reply(_("Bot won't kick for \002%s\002 anymore."), optname.c_str());
@@ -325,7 +323,7 @@ class CommandBSKickBolds : public CommandBSKickBase
  public:
 	CommandBSKickBolds(Module *creator) : CommandBSKickBase(creator, "botserv/kick/bolds", 2, 3)
 	{
-		this->SetDesc(_("Configures badwords kicker"));
+		this->SetDesc(_("Configures bolds kicker"));
 		this->SetSyntax(_("\037channel\037 {\037ON|OFF\037} [\037ttb\037]"));
 	}
 
@@ -514,7 +512,7 @@ class CommandBSKickFlood : public CommandBSKickBase
 				try
 				{
 					i = convertTo<int16_t>(ttb);
-					if (i < 1)
+					if (i < 0)
 						throw ConvertException();
 				}
 				catch (const ConvertException &)
@@ -665,17 +663,30 @@ class CommandBSKickRepeat : public CommandBSKickBase
 				kd->repeattimes = convertTo<int16_t>(times);
 			}
 			catch (const ConvertException &) { }
-			if (kd->repeattimes < 2)
+			if (kd->repeattimes < 1)
 				kd->repeattimes = 3;
 
 			kd->repeat = true;
 			if (kd->ttb[TTB_REPEAT])
-				source.Reply(_("Bot will now kick for \002repeats\002 (users that say the\n"
-						"same thing %d times), and will place a ban after %d\n"
-						"kicks for the same user."), kd->repeattimes + 1, kd->ttb[TTB_REPEAT]);
+			{
+				if (kd->repeattimes != 1)
+					source.Reply(_("Bot will now kick for \002repeats\002 (users that repeat the\n"
+							"same message %d times), and will place a ban after %d\n"
+							"kicks for the same user."), kd->repeattimes, kd->ttb[TTB_REPEAT]);
+				else
+					source.Reply(_("Bot will now kick for \002repeats\002 (users that repeat the\n"
+							"same message %d time), and will place a ban after %d\n"
+							"kicks for the same user."), kd->repeattimes, kd->ttb[TTB_REPEAT]);
+			}
 			else
-				source.Reply(_("Bot will now kick for \002repeats\002 (users that say the\n"
-					"same thing %d times)."), kd->repeattimes + 1);
+			{
+				if (kd->repeattimes != 1)
+					source.Reply(_("Bot will now kick for \002repeats\002 (users that repeat the\n"
+						"same message %d times)."), kd->repeattimes);
+				else
+					source.Reply(_("Bot will now kick for \002repeats\002 (users that repeat the\n"
+						"same message %d time)."), kd->repeattimes);
+			}
 		}
 		else if (params[1].equals_ci("OFF"))
 		{
@@ -1038,8 +1049,8 @@ class BSKick : public Module
 
 	void check_ban(ChannelInfo *ci, User *u, KickerData *kd, int ttbtype)
 	{
-		/* Don't ban ulines */
-		if (u->server->IsULined())
+		/* Don't ban ulines or protected users */
+		if (u->IsProtected())
 			return;
 
 		BanData::Data &bd = this->GetBanData(u, ci->c);
@@ -1065,7 +1076,7 @@ class BSKick : public Module
 		va_list args;
 		char buf[1024];
 
-		if (!ci || !ci->bi || !ci->c || !u || u->server->IsULined() || !ci->c->FindUser(u))
+		if (!ci || !ci->bi || !ci->c || !u || u->IsProtected() || !ci->c->FindUser(u))
 			return;
 
 		Anope::string fmt = Language::Translate(u, message);

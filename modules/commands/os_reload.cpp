@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -26,8 +26,11 @@ class CommandOSReload : public Command
 			Log(LOG_ADMIN, source, this);
 
 			Configuration::Conf *new_config = new Configuration::Conf();
-			delete Config;
+			Configuration::Conf *old = Config;
 			Config = new_config;
+			Config->Post(old);
+			delete old;
+
 			source.Reply(_("Services' configuration has been reloaded."));
 		}
 		catch (const ConfigException &ex)

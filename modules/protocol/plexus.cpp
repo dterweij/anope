@@ -1,6 +1,6 @@
 /* Plexus 3+ IRCD functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,6 +10,7 @@
  */
 
 #include "module.h"
+#include "modules/sasl.h"
 
 static Anope::string UplinkSID;
 
@@ -20,7 +21,7 @@ class PlexusProto : public IRCDProto
  public:
 	PlexusProto(Module *creator) : IRCDProto(creator, "hybrid-7.2.3+plexus-3.0.1")
 	{
-		DefaultPseudoclientModes = "+oiU";
+		DefaultPseudoclientModes = "+iU";
 		CanSVSNick = true;
 		CanSVSJoin = true;
 		CanSetVHost = true;
@@ -67,7 +68,7 @@ class PlexusProto : public IRCDProto
 			if (uc != NULL)
 				uc->status.Clear();
 
-			BotInfo *setter = BotInfo::Find(user->nick);
+			BotInfo *setter = BotInfo::Find(user->GetUID());
 			for (size_t i = 0; i < cs.Modes().length(); ++i)
 				c->SetMode(setter, ModeManager::FindChannelModeByChar(cs.Modes()[i]), user->GetUID(), false);
 
@@ -86,14 +87,12 @@ class PlexusProto : public IRCDProto
 		if (!ident.empty())
 			UplinkSocket::Message(Me) << "ENCAP * CHGIDENT " << u->GetUID() << " " << ident;
 		UplinkSocket::Message(Me) << "ENCAP * CHGHOST " << u->GetUID() << " " << host;
+		u->SetMode(Config->GetClient("HostServ"), "CLOAK");
 	}
 
 	void SendVhostDel(User *u) anope_override
 	{
-		if (u->HasMode("CLOAK"))
-			u->RemoveMode(Config->GetClient("HostServ"), "CLOAK");
-		else
-			this->SendVhost(u, u->GetIdent(), u->chost);
+		u->RemoveMode(Config->GetClient("HostServ"), "CLOAK");
 	}
 
 	void SendConnect() anope_override
@@ -144,12 +143,9 @@ class PlexusProto : public IRCDProto
 		UplinkSocket::Message(source) << "ENCAP * SVSMODE " << u->GetUID() << " " << u->timestamp << " " << buf;
 	}
 
-	void SendLogin(User *u) anope_override
+	void SendLogin(User *u, NickAlias *na) anope_override
 	{
-		if (!u->Account())
-			return;
-
-		UplinkSocket::Message(Me) << "ENCAP * SU " << u->GetUID() << " " << u->Account()->display;
+		UplinkSocket::Message(Me) << "ENCAP * SU " << u->GetUID() << " " << na->nc->display;
 	}
 
 	void SendLogout(User *u) anope_override
@@ -171,11 +167,28 @@ class PlexusProto : public IRCDProto
 	{
 		UplinkSocket::Message(source) << "ENCAP " << user->server->GetName() << " SVSPART " << user->GetUID() << " " << chan;
 	}
+
+	void SendSASLMessage(const SASL::Message &message) anope_override
+	{
+		Server *s = Server::Find(message.target.substr(0, 3));
+		UplinkSocket::Message(Me) << "ENCAP " << (s ? s->GetName() : message.target.substr(0, 3)) << " SASL " << message.source << " " << message.target << " " << message.type << " " << message.data << (message.ext.empty() ? "" : (" " + message.ext));
+	}
+
+	void SendSVSLogin(const Anope::string &uid, const Anope::string &acc) anope_override
+	{
+		Server *s = Server::Find(uid.substr(0, 3));
+		UplinkSocket::Message(Me) << "ENCAP " << (s ? s->GetName() : uid.substr(0, 3)) << " SVSLOGIN " << uid << " * * * " << acc;
+	}
+
+	void SendSVSNOOP(const Server *server, bool set) anope_override
+	{
+		UplinkSocket::Message() << "ENCAP " << server->GetName() << " SVSNOOP " << (set ? "+" : "-");
+	}
 };
 
 struct IRCDMessageEncap : IRCDMessage
 {
-	IRCDMessageEncap(Module *creator) : IRCDMessage(creator, "ENCAP", 4) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); }
+	IRCDMessageEncap(Module *creator) : IRCDMessage(creator, "ENCAP", 4) { SetFlag(IRCDMESSAGE_REQUIRE_SERVER); SetFlag(IRCDMESSAGE_SOFT_LIMIT); }
 
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
@@ -212,6 +225,19 @@ struct IRCDMessageEncap : IRCDMessage
 				FOREACH_MOD(OnFingerprint, (u));
 			}
 		}
+
+		else if (params[1] == "SASL" && SASL::sasl && params.size() >= 6)
+		{
+			SASL::Message m;
+			m.source = params[2];
+			m.target = params[3];
+			m.type = params[4];
+			m.data = params[5];
+			m.ext = params.size() > 6 ? params[6] : "";
+
+			SASL::sasl->ProcessMessage(m);
+		}
+
 		return;
 	}
 };
@@ -287,7 +313,7 @@ struct IRCDMessageUID : IRCDMessage
 		if (params[8] != "0" && !na)
 			na = NickAlias::Find(params[8]);
 
-		new User(params[0], params[4], params[9], params[5], ip, source.GetServer(), params[10], ts, params[3], params[7], na ? *na->nc : NULL);
+		User::OnIntroduce(params[0], params[4], params[9], params[5], ip, source.GetServer(), params[10], ts, params[3], params[7], na ? *na->nc : NULL);
 	}
 };
 
@@ -338,13 +364,15 @@ class ProtoPlexus : public Module
 		ModeManager::AddUserMode(new UserMode("CALLERID", 'g'));
 		ModeManager::AddUserMode(new UserMode("INVIS", 'i'));
 		ModeManager::AddUserMode(new UserModeOperOnly("LOCOPS", 'l'));
-		ModeManager::AddUserMode(new UserMode("OPER", 'o'));
-		ModeManager::AddUserMode(new UserMode("PRIV", 'p'));
+		ModeManager::AddUserMode(new UserModeOperOnly("OPER", 'o'));
 		ModeManager::AddUserMode(new UserModeOperOnly("NETADMIN", 'N'));
+		ModeManager::AddUserMode(new UserMode("PRIV", 'p'));
+		ModeManager::AddUserMode(new UserModeOperOnly("ROUTING", 'q'));
 		ModeManager::AddUserMode(new UserModeNoone("REGISTERED", 'r'));
 		ModeManager::AddUserMode(new UserMode("REGPRIV", 'R'));
 		ModeManager::AddUserMode(new UserModeOperOnly("SNOMASK", 's'));
 		ModeManager::AddUserMode(new UserModeNoone("SSL", 'S'));
+		ModeManager::AddUserMode(new UserModeNoone("PROTECTED", 'U'));
 		ModeManager::AddUserMode(new UserMode("WALLOPS", 'w'));
 		ModeManager::AddUserMode(new UserModeNoone("WEBIRC", 'W'));
 		ModeManager::AddUserMode(new UserMode("CLOAK", 'x'));
@@ -354,7 +382,6 @@ class ProtoPlexus : public Module
 		ModeManager::AddChannelMode(new ChannelModeList("BAN", 'b'));
 		ModeManager::AddChannelMode(new ChannelModeList("EXCEPT", 'e'));
 		ModeManager::AddChannelMode(new ChannelModeList("INVITEOVERRIDE", 'I'));
-		ModeManager::AddUserMode(new UserModeNoone("PROTECTED", 'U'));
 
 		/* v/h/o/a/q */
 		ModeManager::AddChannelMode(new ChannelModeStatus("VOICE", 'v', '+', 0));
@@ -364,7 +391,7 @@ class ProtoPlexus : public Module
 		ModeManager::AddChannelMode(new ChannelModeStatus("OWNER", 'q', '~', 4));
 
 		/* l/k */
-		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l'));
+		ModeManager::AddChannelMode(new ChannelModeParam("LIMIT", 'l', true));
 		ModeManager::AddChannelMode(new ChannelModeKey('k'));
 
 		/* Add channel modes */
@@ -380,7 +407,6 @@ class ProtoPlexus : public Module
 		ModeManager::AddChannelMode(new ChannelMode("SECRET", 's'));
 		ModeManager::AddChannelMode(new ChannelMode("TOPIC", 't'));
 		ModeManager::AddChannelMode(new ChannelModeOperOnly("OPERONLY", 'O'));
-		ModeManager::AddChannelMode(new ChannelMode("REGMODERATED", 'M'));
 		ModeManager::AddChannelMode(new ChannelMode("REGISTEREDONLY", 'R'));
 		ModeManager::AddChannelMode(new ChannelMode("SSL", 'S'));
 		ModeManager::AddChannelMode(new ChannelMode("PERM", 'z'));

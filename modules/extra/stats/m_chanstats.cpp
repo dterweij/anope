@@ -168,6 +168,7 @@ class MChanstats : public Module
 	SQL::Query query;
 	Anope::string SmileysHappy, SmileysSad, SmileysOther, prefix;
 	std::vector<Anope::string> TableList, ProcedureList, EventList;
+	bool NSDefChanstats, CSDefChanstats;
 
 	void RunQuery(const SQL::Query &q)
 	{
@@ -308,7 +309,7 @@ class MChanstats : public Module
 				"KEY `nick` (`nick`),"
 				"KEY `chan_` (`chan`),"
 				"KEY `type` (`type`)"
-				") ENGINE=InnoDB DEFAULT CHARSET=utf8;";
+				") ENGINE=MyISAM DEFAULT CHARSET=utf8;";
 			this->RunQuery(query);
 		}
 		/* There is no CREATE OR REPLACE PROCEDURE in MySQL */
@@ -423,7 +424,7 @@ class MChanstats : public Module
 			"END;";
 		this->RunQuery(query);
 
-		/* dont prepend any database prefix to events so we can always delete/change old events */
+		/* don't prepend any database prefix to events so we can always delete/change old events */
 		if (this->HasEvent("chanstats_event_cleanup_daily"))
 		{
 			query = "DROP EVENT chanstats_event_cleanup_daily";
@@ -490,7 +491,8 @@ class MChanstats : public Module
 		SmileysHappy = block->Get<const Anope::string>("SmileysHappy");
 		SmileysSad = block->Get<const Anope::string>("SmileysSad");
 		SmileysOther = block->Get<const Anope::string>("SmileysOther");
-
+		NSDefChanstats = block->Get<bool>("ns_def_chanstats");
+		CSDefChanstats = block->Get<bool>("cs_def_chanstats");
 		Anope::string engine = block->Get<const Anope::string>("engine");
 		this->sql = ServiceReference<SQL::Provider>("SQL::Provider", engine);
 		if (sql)
@@ -515,14 +517,13 @@ class MChanstats : public Module
 			info.AddOption(_("Chanstats"));
 	}
 
-	void OnTopicUpdated(Channel *c, const Anope::string &user, const Anope::string &topic) anope_override
+	void OnTopicUpdated(User *source, Channel *c, const Anope::string &user, const Anope::string &topic) anope_override
 	{
-		User *u = User::Find(user);
-		if (!u || !u->Account() || !c->ci || !cs_stats.HasExt(c->ci))
+		if (!source || !source->Account() || !c->ci || !cs_stats.HasExt(c->ci))
 			return;
 		query = "CALL " + prefix + "chanstats_proc_update(@channel@, @nick@, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);";
 		query.SetValue("channel", c->name);
-		query.SetValue("nick", GetDisplay(u));
+		query.SetValue("nick", GetDisplay(source));
 		this->RunQuery(query);
 	}
 
@@ -589,7 +590,12 @@ class MChanstats : public Module
 		size_t smileys_other = CountSmileys(msg, SmileysOther);
 
 		// do not count smileys as words
-		words = words - smileys_happy - smileys_sad - smileys_other;
+		size_t smileys = smileys_happy + smileys_sad + smileys_other;
+		if (smileys > words)
+			words = 0;
+		else
+			words = words - smileys;
+
 		query = "CALL " + prefix + "chanstats_proc_update(@channel@, @nick@, 1, @letters@, @words@, @action@, "
 		"@smileys_happy@, @smileys_sad@, @smileys_other@, '0', '0', '0', '0');";
 		query.SetValue("channel", c->name);
@@ -623,6 +629,18 @@ class MChanstats : public Module
 		query = "DELETE FROM `" + prefix + "chanstats` WHERE `chan` = @channel@;";
 		query.SetValue("channel", ci->name);
 		this->RunQuery(query);
+	}
+
+	void OnChanRegistered(ChannelInfo *ci)
+	{
+		if (CSDefChanstats)
+			ci->Extend<bool>("CS_STATS");
+	}
+
+	void OnNickRegister(User *user, NickAlias *na, const Anope::string &)
+	{
+		if (NSDefChanstats)
+			na->nc->Extend<bool>("NS_STATS");
 	}
 };
 

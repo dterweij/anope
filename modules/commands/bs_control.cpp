@@ -1,6 +1,6 @@
 /* BotServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -16,7 +16,7 @@ class CommandBSSay : public Command
  public:
 	CommandBSSay(Module *creator) : Command(creator, "botserv/say", 2, 2)
 	{
-		this->SetDesc(_("Makes the bot say the given text on the given channel"));
+		this->SetDesc(_("Makes the bot say the specified text on the specified channel"));
 		this->SetSyntax(_("\037channel\037 \037text\037"));
 	}
 
@@ -66,7 +66,7 @@ class CommandBSSay : public Command
 	{
 		this->SendSyntax(source);
 		source.Reply(" ");
-		source.Reply(_("Makes the bot say the given text on the given channel."));
+		source.Reply(_("Makes the bot say the specified text on the specified channel."));
 		return true;
 	}
 };
@@ -125,7 +125,7 @@ class CommandBSAct : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply(_("Makes the bot do the equivalent of a \"/me\" command\n"
-				"on the given channel using the given text."));
+				"on the specified channel using the specified text."));
 		return true;
 	}
 };

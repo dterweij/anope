@@ -1,6 +1,6 @@
 /* inspircd 1.2 functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -10,6 +10,7 @@
  */
 
 #include "module.h"
+#include "modules/sasl.h"
 
 struct SASLUser
 {
@@ -18,7 +19,6 @@ struct SASLUser
 	time_t created;
 };
 
-static bool sasl = true;
 static std::list<SASLUser> saslusers;
 
 static Anope::string rsquit_server, rsquit_id;
@@ -28,7 +28,7 @@ class ChannelModeFlood : public ChannelModeParam
  public:
 	ChannelModeFlood(char modeChar, bool minusNoArg) : ChannelModeParam("FLOOD", modeChar, minusNoArg) { }
 
-	bool IsValid(const Anope::string &value) const anope_override
+	bool IsValid(Anope::string &value) const anope_override
 	{
 		try
 		{
@@ -216,7 +216,8 @@ class InspIRCd12Proto : public IRCDProto
 
 	void SendNumericInternal(int numeric, const Anope::string &dest, const Anope::string &buf) anope_override
 	{
-		UplinkSocket::Message() << "PUSH " << dest << " ::" << Me->GetName() << " " << numeric << " " << dest << " " << buf;
+		User *u = User::Find(dest);
+		UplinkSocket::Message() << "PUSH " << dest << " ::" << Me->GetName() << " " << numeric << " " << (u ? u->nick : dest) << " " << buf;
 	}
 
 	void SendModeInternal(const MessageSource &source, const Channel *dest, const Anope::string &buf) anope_override
@@ -228,6 +229,8 @@ class InspIRCd12Proto : public IRCDProto
 	{
 		Anope::string modes = "+" + u->GetModes();
 		UplinkSocket::Message(Me) << "UID " << u->GetUID() << " " << u->timestamp << " " << u->nick << " " << u->host << " " << u->host << " " << u->GetIdent() << " 0.0.0.0 " << u->timestamp << " " << modes << " :" << u->realname;
+		if (modes.find('o') != Anope::string::npos)
+			UplinkSocket::Message(u) << "OPERTYPE :services";
 	}
 
 	/* SERVER services-dev.chatspike.net password 0 :Description here */
@@ -269,7 +272,7 @@ class InspIRCd12Proto : public IRCDProto
 			if (uc != NULL)
 				uc->status.Clear();
 
-			BotInfo *setter = BotInfo::Find(user->nick);
+			BotInfo *setter = BotInfo::Find(user->GetUID());
 			for (size_t i = 0; i < cs.Modes().length(); ++i)
 				c->SetMode(setter, ModeManager::FindChannelModeByChar(cs.Modes()[i]), user->GetUID(), false);
 
@@ -375,12 +378,13 @@ class InspIRCd12Proto : public IRCDProto
 			UplinkSocket::Message(source) << "SNONOTICE A :" << buf;
 	}
 
-	void SendLogin(User *u) anope_override
+	void SendLogin(User *u, NickAlias *na) anope_override
 	{
-		if (!u->Account() || u->Account()->HasExt("UNCONFIRMED"))
+		/* InspIRCd uses an account to bypass chmode +R, not umode +r, so we can't send this here */
+		if (na->nc->HasExt("UNCONFIRMED"))
 			return;
 
-		UplinkSocket::Message(Me) << "METADATA " << u->GetUID() << " accountname :" << u->Account()->display;
+		UplinkSocket::Message(Me) << "METADATA " << u->GetUID() << " accountname :" << na->nc->display;
 	}
 
 	void SendLogout(User *u) anope_override
@@ -395,6 +399,33 @@ class InspIRCd12Proto : public IRCDProto
 
 	void SendOper(User *u) anope_override
 	{
+	}
+
+	void SendSASLMessage(const SASL::Message &message) anope_override
+	{
+		UplinkSocket::Message(Me) << "ENCAP " << message.target.substr(0, 3) << " SASL " << message.source << " " << message.target << " " << message.type << " " << message.data << (message.ext.empty() ? "" : (" " + message.ext));
+	}
+
+	void SendSVSLogin(const Anope::string &uid, const Anope::string &acc, const Anope::string &vident, const Anope::string &vhost) anope_override
+	{
+		UplinkSocket::Message(Me) << "METADATA " << uid << " accountname :" << acc;
+
+		SASLUser su;
+		su.uid = uid;
+		su.acc = acc;
+		su.created = Anope::CurTime;
+
+		for (std::list<SASLUser>::iterator it = saslusers.begin(); it != saslusers.end();)
+		{
+			SASLUser &u = *it;
+
+			if (u.created + 30 < Anope::CurTime || u.uid == uid)
+				it = saslusers.erase(it);
+			else
+				++it;
+		}
+
+		saslusers.push_back(su);
 	}
 
 	bool IsExtbanValid(const Anope::string &mask) anope_override
@@ -845,83 +876,16 @@ struct IRCDMessageEncap : IRCDMessage
 		if (Anope::Match(Me->GetSID(), params[0]) == false)
 			return;
 
-		if (sasl && params[1] == "SASL" && params.size() == 6)
+		if (SASL::sasl && params[1] == "SASL" && params.size() >= 6)
 		{
-			class InspIRCDSASLIdentifyRequest : public IdentifyRequest
-			{
-				Anope::string uid;
+			SASL::Message m;
+			m.source = params[2];
+			m.target = params[3];
+			m.type = params[4];
+			m.data = params[5];
+			m.ext = params.size() > 6 ? params[6] : "";
 
-			 public:
-				InspIRCDSASLIdentifyRequest(Module *m, const Anope::string &id, const Anope::string &acc, const Anope::string &pass) : IdentifyRequest(m, acc, pass), uid(id) { }
-
-				void OnSuccess() anope_override
-				{
-					UplinkSocket::Message(Me) << "METADATA " << this->uid << " accountname :" << this->GetAccount();
-					UplinkSocket::Message(Me) << "ENCAP " << this->uid.substr(0, 3) << " SASL " << Me->GetSID() << " " << this->uid << " D S";
-
-					SASLUser su;
-					su.uid = this->uid;
-					su.acc = this->GetAccount();
-					su.created = Anope::CurTime;
-
-					for (std::list<SASLUser>::iterator it = saslusers.begin(); it != saslusers.end();)
-					{
-						SASLUser &u = *it;
-
-						if (u.created + 30 < Anope::CurTime || u.uid == this->uid)
-							it = saslusers.erase(it);
-						else
-							++it;
-					}
-
-					saslusers.push_back(su);
-				}
-
-				void OnFail() anope_override
-				{
-					UplinkSocket::Message(Me) << "ENCAP " << this->uid.substr(0, 3) << " SASL " << Me->GetSID() << " " << this->uid << " " << " D F";
-
-					Log(Config->GetClient("NickServ")) << "A user failed to identify for account " << this->GetAccount() << " using SASL";
-				}
-			};
-
-			/*
-			Received: :869 ENCAP * SASL 869AAAAAH * S PLAIN
-			Sent: :00B ENCAP 869 SASL 00B 869AAAAAH C +
-			Received: :869 ENCAP * SASL 869AAAAAH 00B C QWRhbQBBZGFtAG1vbw==
-			                                            base64(account\0account\0pass)
-			*/
-			if (params[4] == "S")
-			{
-				if (params[5] == "PLAIN")
-					UplinkSocket::Message(Me) << "ENCAP " << params[2].substr(0, 3) << " SASL " << Me->GetSID() << " " << params[2] << " C +";
-				else
-					UplinkSocket::Message(Me) << "ENCAP " << params[2].substr(0, 3) << " SASL " << Me->GetSID() << " " << params[2] << " D F";
-			}
-			else if (params[4] == "C")
-			{
-				Anope::string decoded;
-				Anope::B64Decode(params[5], decoded);
-
-				size_t p = decoded.find('\0');
-				if (p == Anope::string::npos)
-					return;
-				decoded = decoded.substr(p + 1);
-
-				p = decoded.find('\0');
-				if (p == Anope::string::npos)
-					return;
-
-				Anope::string acc = decoded.substr(0, p),
-					pass = decoded.substr(p + 1);
-
-				if (acc.empty() || pass.empty())
-					return;
-
-				IdentifyRequest *req = new InspIRCDSASLIdentifyRequest(this->owner, params[2], acc, pass);
-				FOREACH_MOD(OnCheckAuthentication, (NULL, req));
-				req->Dispatch();
-			}
+			SASL::sasl->ProcessMessage(m);
 		}
 	}
 };
@@ -986,7 +950,7 @@ struct IRCDMessageFJoin : IRCDMessage
 			sju.second = User::Find(buf);
 			if (!sju.second)
 			{
-				Log(LOG_DEBUG) << "FJOIN for nonexistant user " << buf << " on " << params[0];
+				Log(LOG_DEBUG) << "FJOIN for non-existent user " << buf << " on " << params[0];
 				continue;
 			}
 
@@ -1037,7 +1001,7 @@ struct IRCDMessageFTopic : IRCDMessage
 
 		Channel *c = Channel::Find(params[0]);
 		if (c)
-			c->ChangeTopicInternal(params[2], params[3], Anope::string(params[1]).is_pos_number_only() ? convertTo<time_t>(params[1]) : Anope::CurTime);
+			c->ChangeTopicInternal(NULL, params[2], params[3], Anope::string(params[1]).is_pos_number_only() ? convertTo<time_t>(params[1]) : Anope::CurTime);
 	}
 };
 
@@ -1183,12 +1147,7 @@ struct IRCDMessageMode : IRCDMessage
 			   users modes, we have to kludge this
 			   as it slightly breaks RFC1459
 			 */
-			User *u = source.GetUser();
-			// This can happen with server-origin modes.
-			if (!u)
-				u = User::Find(params[0]);
-			// if it's still null, drop it like fire.
-			// most likely situation was that server introduced a nick which we subsequently akilled
+			User *u = User::Find(params[0]);
 			if (u)
 				u->SetModesInternal(source, "%s", params[1].c_str());
 		}
@@ -1212,7 +1171,7 @@ struct IRCDMessageOperType : IRCDMessage
 	void Run(MessageSource &source, const std::vector<Anope::string> &params) anope_override
 	{
 		/* opertype is equivalent to mode +o because servers
-		   dont do this directly */
+		   don't do this directly */
 		User *u = source.GetUser();
 		if (!u->HasMode("OPER"))
 			u->SetModesInternal(source, "+o");
@@ -1322,7 +1281,7 @@ struct IRCDMessageUID : IRCDMessage
 			modes += " " + params[i];
 
 		NickAlias *na = NULL;
-		if (sasl)
+		if (SASL::sasl)
 			for (std::list<SASLUser>::iterator it = saslusers.begin(); it != saslusers.end();)
 			{
 				SASLUser &u = *it;
@@ -1338,7 +1297,9 @@ struct IRCDMessageUID : IRCDMessage
 					++it;
 			}
 
-		new User(params[2], params[5], params[3], params[4], params[6], source.GetServer(), params[params.size() - 1], ts, modes, params[0], na ? *na->nc : NULL);
+		User *u = User::OnIntroduce(params[2], params[5], params[3], params[4], params[6], source.GetServer(), params[params.size() - 1], ts, modes, params[0], na ? *na->nc : NULL);
+		if (u)
+			u->signon = convertTo<time_t>(params[7]);
 	}
 };
 
@@ -1401,17 +1362,12 @@ class ProtoInspIRCd12 : public Module
 		Servers::Capab.insert("NOQUIT");
 	}
 
-	void OnReload(Configuration::Conf *conf) anope_override
-	{
-		sasl = conf->GetModule(this)->Get<bool>("sasl") || conf->GetModule("inspircd20")->Get<bool>("sasl");
-	}
-
 	void OnUserNickChange(User *u, const Anope::string &) anope_override
 	{
 		/* InspIRCd 1.2 doesn't set -r on nick change, remove -r here. Note that if we have to set +r later
 		 * this will cancel out this -r, resulting in no mode changes.
 		 *
-		 * Do not set -r if we dont have a NickServ loaded - DP
+		 * Do not set -r if we don't have a NickServ loaded - DP
 		 */
 		BotInfo *NickServ = Config->GetClient("NickServ");
 		if (NickServ)

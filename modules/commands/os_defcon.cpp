@@ -1,6 +1,6 @@
 /* OperServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -354,8 +354,7 @@ class OSDefcon : public Module
 		dconfig.message = block->Get<const Anope::string>("message");
 		dconfig.offmessage = block->Get<const Anope::string>("offmessage");
 
-		Module *session = ModuleManager::FindModule("os_session");
-		block = conf->GetModule(session);
+		block = conf->GetModule("os_session");
 
 		dconfig.max_session_kill = block->Get<int>("maxsessionkill");
 		dconfig.session_autokill_expiry = block->Get<time_t>("sessionautokillexpiry");
@@ -439,7 +438,16 @@ class OSDefcon : public Module
 
 	EventReturn OnPreCommand(CommandSource &source, Command *command, std::vector<Anope::string> &params) anope_override
 	{
-		if (command->name == "nickserv/register" || command->name == "nickserv/group")
+		if (DConfig.Check(DEFCON_OPER_ONLY) && !source.IsOper())
+		{
+			source.Reply(_("Services are in DefCon mode, please try again later."));
+			return EVENT_STOP;
+		}
+		else if (DConfig.Check(DEFCON_SILENT_OPER_ONLY) && !source.IsOper())
+		{
+			return EVENT_STOP;
+		}
+		else if (command->name == "nickserv/register" || command->name == "nickserv/group")
 		{
 			if (DConfig.Check(DEFCON_NO_NEW_NICKS))
 			{
@@ -487,22 +495,17 @@ class OSDefcon : public Module
 			XLine x("*@" + u->host, OperServ ? OperServ->nick : "defcon", Anope::CurTime + DConfig.akillexpire, DConfig.akillreason, XLineManager::GenerateUID());
 			akills->Send(NULL, &x);
 		}
-		if (DConfig.Check(DEFCON_NO_NEW_CLIENTS) || DConfig.Check(DEFCON_AKILL_NEW_CLIENTS))
-		{
-			u->Kill(OperServ ? OperServ->nick : "", DConfig.akillreason);
-			return;
-		}
 
 		if (DConfig.Check(DEFCON_NO_NEW_CLIENTS) || DConfig.Check(DEFCON_AKILL_NEW_CLIENTS))
 		{
-			u->Kill(OperServ ? OperServ->nick : "", DConfig.akillreason);
+			u->Kill(OperServ, DConfig.akillreason);
 			return;
 		}
 
 		if (DConfig.sessionlimit <= 0 || !session_service)
 			return;
 
-		Session *session = session_service->FindSession(u->ip);
+		Session *session = session_service->FindSession(u->ip.addr());
 		Exception *exception = session_service->FindException(u);
 
 		if (DConfig.Check(DEFCON_REDUCE_SESSION) && !exception)
@@ -511,7 +514,7 @@ class OSDefcon : public Module
 			{
 				if (!DConfig.sle_reason.empty())
 				{
-					Anope::string message = DConfig.sle_reason.replace_all_cs("%IP%", u->ip);
+					Anope::string message = DConfig.sle_reason.replace_all_cs("%IP%", u->ip.addr());
 					u->SendMessage(OperServ, message);
 				}
 				if (!DConfig.sle_detailsloc.empty())
@@ -520,13 +523,13 @@ class OSDefcon : public Module
 				++session->hits;
 				if (akills && DConfig.max_session_kill && session->hits >= DConfig.max_session_kill)
 				{
-					XLine x("*@" + u->host, OperServ ? OperServ->nick : "", Anope::CurTime + DConfig.session_autokill_expiry, "Defcon session limit exceeded", XLineManager::GenerateUID());
+					XLine x("*@" + session->addr.mask(), OperServ ? OperServ->nick : "", Anope::CurTime + DConfig.session_autokill_expiry, "Defcon session limit exceeded", XLineManager::GenerateUID());
 					akills->Send(NULL, &x);
-					Log(OperServ, "akill/defcon") << "[DEFCON] Added a temporary AKILL for \002*@" << u->host << "\002 due to excessive connections";
+					Log(OperServ, "akill/defcon") << "[DEFCON] Added a temporary AKILL for \002*@" << session->addr.mask() << "\002 due to excessive connections";
 				}
 				else
 				{
-					u->Kill(OperServ ? OperServ->nick : "", "Defcon session limit exceeded");
+					u->Kill(OperServ, "Defcon session limit exceeded");
 				}
 			}
 		}
@@ -573,7 +576,7 @@ static void runDefCon()
 				{
 					Log(OperServ, "operserv/defcon") << "DEFCON: setting " << newmodes << " on all channels";
 					for (channel_map::const_iterator it = ChannelList.begin(), it_end = ChannelList.end(); it != it_end; ++it)
-						it->second->SetModes(OperServ, false, "%s", newmodes.c_str());
+						it->second->SetModes(OperServ, true, "%s", newmodes.c_str());
 				}
 			}
 		}

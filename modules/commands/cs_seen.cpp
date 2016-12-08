@@ -1,6 +1,6 @@
 /* cs_seen: provides a seen command by tracking all users
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -8,7 +8,6 @@
  * Based on the original code of Epona by Lara.
  * Based on the original code of Services by Andy Church.
  */
-
 
 #include "module.h"
 
@@ -172,7 +171,7 @@ class CommandOSSeen : public Command
 		source.Reply(" ");
 		source.Reply(_("The \002STATS\002 command prints out statistics about stored nicks and memory usage."));
 		source.Reply(_("The \002CLEAR\002 command lets you clean the database by removing all entries from the\n"
-				"entries from the database that were added within \037time\037.\n"
+				"database that were added within \037time\037.\n"
 				" \n"
 				"Example:\n"
 				" %s CLEAR 30m\n"
@@ -237,11 +236,16 @@ class CommandSeen : public Command
 
 		AccessGroup ag = source.c->ci->AccessFor(na->nc);
 		time_t last = 0;
-		for (unsigned i = 0; i < ag.size(); ++i)
+		for (unsigned int i = 0; i < ag.paths.size(); ++i)
 		{
-			ChanAccess *a = ag[i];
+			ChanAccess::Path &p = ag.paths[i];
 
-			if (*a->nc == na->nc && a->last_seen > last)
+			if (p.empty())
+				continue;
+
+			ChanAccess *a = p[p.size() - 1];
+
+			if (a->GetAccount() == na->nc && a->last_seen > last)
 				last = a->last_seen;
 		}
 
@@ -256,6 +260,7 @@ class CommandSeen : public Command
 	{
 		this->SetDesc(_("Tells you about the last time a user was seen"));
 		this->SetSyntax(_("\037nick\037"));
+		this->AllowUnregistered(true);
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override

@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -22,6 +22,13 @@ class CommandCSUnban : public Command
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
+		ChannelMode *cm = ModeManager::FindChannelModeByName("BAN");
+		if (!cm)
+			return;
+
+		std::vector<ChannelMode *> modes = cm->listeners;
+		modes.push_back(cm);
+
 		if (params.empty())
 		{
 			if (!source.GetUser())
@@ -38,8 +45,9 @@ class CommandCSUnban : public Command
 				if (!ci->c || !source.AccessFor(ci).HasPriv("UNBAN"))
 					continue;
 
-				if (ci->c->Unban(source.GetUser(), true))
-					++count;
+				for (unsigned j = 0; j < modes.size(); ++j)
+					if (ci->c->Unban(source.GetUser(), modes[j]->name, true))
+						++count;
 			}
 
 			Log(LOG_COMMAND, source, this, NULL) << "on all channels";
@@ -80,7 +88,8 @@ class CommandCSUnban : public Command
 		bool override = !source.AccessFor(ci).HasPriv("UNBAN") && source.HasPriv("chanserv/kick");
 		Log(override ? LOG_OVERRIDE : LOG_COMMAND, source, this, ci) << "to unban " << u2->nick;
 
-		ci->c->Unban(u2, source.GetUser() == u2);
+		for (unsigned i = 0; i < modes.size(); ++i)
+			ci->c->Unban(u2, modes[i]->name, source.GetUser() == u2);
 		if (u2 == source.GetUser())
 			source.Reply(_("You have been unbanned from \002%s\002."), ci->c->name.c_str());
 		else
@@ -96,7 +105,7 @@ class CommandCSUnban : public Command
 				"given, all bans affecting you in channels you have access\n"
 				"in are removed.\n"
 				" \n"
-				"By default, limited to AOPs or those with level 5 and above\n"
+				"By default, limited to AOPs or those with level 5 access and above\n"
 				"on the channel."), source.service->nick.c_str());
 		return true;
 	}

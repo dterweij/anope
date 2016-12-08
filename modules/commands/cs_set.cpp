@@ -1,6 +1,6 @@
 /* ChanServ core functions
  *
- * (C) 2003-2014 Anope Team
+ * (C) 2003-2016 Anope Team
  * Contact us at team@anope.org
  *
  * Please read COPYING and README for further details.
@@ -35,7 +35,8 @@ class CommandCSSet : public Command
 			" \n"
 			"Available options:"));
 		Anope::string this_name = source.command;
-		bool hide_privileged_commands = Config->GetBlock("options")->Get<bool>("hideprivilegedcommands");
+		bool hide_privileged_commands = Config->GetBlock("options")->Get<bool>("hideprivilegedcommands"),
+		     hide_registered_commands = Config->GetBlock("options")->Get<bool>("hideregisteredcommands");
 		for (CommandInfo::map::const_iterator it = source.service->commands.begin(), it_end = source.service->commands.end(); it != it_end; ++it)
 		{
 			const Anope::string &c_name = it->first;
@@ -44,13 +45,12 @@ class CommandCSSet : public Command
 			{
 				ServiceReference<Command> c("Command", info.name);
 
+				// XXX dup
 				if (!c)
 					continue;
-				else if (!hide_privileged_commands)
-					; // Always show with hide_privileged_commands disabled
-				else if (!c->AllowUnregistered() && !source.GetAccount())
+				else if (hide_registered_commands && !c->AllowUnregistered() && !source.GetAccount())
 					continue;
-				else if (!info.permission.empty() && !source.HasCommand(info.permission))
+				else if (hide_privileged_commands && !info.permission.empty() && !source.HasCommand(info.permission))
 					continue;
 
 				source.command = it->first;
@@ -616,7 +616,7 @@ class CommandCSSetPersist : public Command
 				" \n"
 				"If your IRCd has a permanent (persistent) channel mode\n"
 				"and it is set or unset (for any reason, including MODE LOCK),\n"
-				"persist is automatically set and unset for the channel aswell.\n"
+				"persist is automatically set and unset for the channel as well.\n"
 				"Additionally, services will set or unset this mode when you\n"
 				"set persist on or off."), BotServ ? BotServ->nick.c_str() : "BotServ",
 				ChanServ ? ChanServ->nick.c_str() : "ChanServ");
@@ -742,10 +742,9 @@ class CommandCSSetSecure : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply(_("Enables or disables security features for a\n"
-			"channel. When \002%s\002 is set, only users who have\n"
-			"registered their nicknames and IDENTIFY'd\n"
-			"with their password will be given access to the channel\n"
-			"as controlled by the access list."), this->name.c_str());
+			"channel. When \002SECURE\002 is set, only users who have\n"
+			"identified to services, and are not only recognized, will be\n"
+			"given access to channels from account-based access entries."));
 		return true;
 	}
 };
@@ -870,8 +869,8 @@ class CommandCSSetSecureOps : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply(_("Enables or disables the \002secure ops\002 option for a channel.\n"
-				"When \002secure ops\002 is set, users who are not on the userlist\n"
-				"will not be allowed chanop status."));
+				"When \002secure ops\002 is set, users who are not on the access list\n"
+				"will not be allowed channel operator status."));
 		return true;
 	}
 };
@@ -1010,7 +1009,7 @@ class CommandCSSetSuccessor : public Command
 		else
 			nc = NULL;
 
-		Log(!source.permission.empty() ? LOG_ADMIN : LOG_COMMAND, source, this, ci) << "to change the successor from " << (ci->GetSuccessor() ? ci->GetSuccessor()->display : "(none)") << " to " << (nc ? nc->display : "(none)");
+		Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to change the successor from " << (ci->GetSuccessor() ? ci->GetSuccessor()->display : "(none)") << " to " << (nc ? nc->display : "(none)");
 
 		ci->SetSuccessor(nc);
 
@@ -1136,6 +1135,7 @@ class CSSet : public Module
 			ChannelInfo *ci = anope_dynamic_static_cast<ChannelInfo *>(s);
 			Anope::string modes;
 			data["last_modes"] >> modes;
+			ci->last_modes.clear();
 			for (spacesepstream sep(modes); sep.GetToken(modes);)
 			{
 				size_t c = modes.find(',');
@@ -1163,18 +1163,28 @@ class CSSet : public Module
 				return;
 
 			bool created;
-			Channel *c = Channel::FindOrCreate(ci->name, created, ci->time_registered);
-			if (!ci->bi)
-			{
-				BotInfo *ChanServ = Config->GetClient("ChanServ");
-				if (ChanServ)
-					ChanServ->Assign(NULL, ci);
-			}
+			Channel *c = Channel::FindOrCreate(ci->name, created);
 
-			if (ci->bi && !c->FindUser(ci->bi))
+			ChannelMode *cm = ModeManager::FindChannelModeByName("PERM");
+			if (cm)
 			{
-				ChannelStatus status(BotModes());
-				ci->bi->Join(c, &status);
+				c->SetMode(NULL, cm);
+			}
+			/* on startup we might not know mode availibity here */
+			else if (Me && Me->IsSynced())
+			{
+				if (!ci->bi)
+				{
+					BotInfo *ChanServ = Config->GetClient("ChanServ");
+					if (ChanServ)
+						ChanServ->Assign(NULL, ci);
+				}
+
+				if (ci->bi && !c->FindUser(ci->bi))
+				{
+					ChannelStatus status(BotModes());
+					ci->bi->Join(c, &status);
+				}
 			}
 
 			if (created)
@@ -1198,6 +1208,8 @@ class CSSet : public Module
 	CommandCSSetSuccessor commandcssetsuccessor;
 	CommandCSSetNoexpire commandcssetnoexpire;
 
+	ExtensibleRef<bool> inhabit;
+
 	bool persist_lower_ts;
 
  public:
@@ -1212,7 +1224,9 @@ class CSSet : public Module
 		commandcssetdescription(this), commandcssetfounder(this), commandcssetkeepmodes(this),
 		commandcssetpeace(this), commandcssetpersist(this), commandcssetrestricted(this),
 		commandcssetsecure(this), commandcssetsecurefounder(this), commandcssetsecureops(this), commandcssetsignkick(this),
-		commandcssetsuccessor(this), commandcssetnoexpire(this)
+		commandcssetsuccessor(this), commandcssetnoexpire(this),
+
+		inhabit("inhabit")
 	{
 	}
 
@@ -1226,7 +1240,7 @@ class CSSet : public Module
 		ci->bantype = Config->GetModule(this)->Get<int>("defbantype", "2");
 	}
 
-	void OnChannelCreate(Channel *c) anope_override
+	void OnChannelSync(Channel *c) anope_override
 	{
 		if (c->ci && keep_modes.HasExt(c->ci))
 		{
@@ -1234,11 +1248,6 @@ class CSSet : public Module
 			for (Channel::ModeList::iterator it = ml.begin(); it != ml.end(); ++it)
 				c->SetMode(c->ci->WhoSends(), it->first, it->second);
 		}
-	}
-
-	void OnChannelSync(Channel *c) anope_override
-	{
-		OnChannelCreate(c);
 	}
 
 	EventReturn OnCheckKick(User *u, Channel *c, Anope::string &mask, Anope::string &reason) anope_override
@@ -1267,7 +1276,7 @@ class CSSet : public Module
 			if (mode->name == "PERM")
 				persist.Set(c->ci, true);
 
-			if (mode->type != MODE_STATUS && !c->syncing && Me->IsSynced())
+			if (mode->type != MODE_STATUS && !c->syncing && Me->IsSynced() && (!inhabit || !inhabit->HasExt(c)))
 				c->ci->last_modes = c->GetModes();
 		}
 
@@ -1280,24 +1289,11 @@ class CSSet : public Module
 		{
 			if (c->ci)
 				persist.Unset(c->ci);
-
-			if (c->CheckDelete())
-			{
-				delete c;
-				return EVENT_STOP;
-			}
 		}
 
-		if (c->ci && mode->type != MODE_STATUS && !c->syncing && Me->IsSynced())
+		if (c->ci && mode->type != MODE_STATUS && !c->syncing && Me->IsSynced() && (!inhabit || !inhabit->HasExt(c)))
 			c->ci->last_modes = c->GetModes();
 
-		return EVENT_CONTINUE;
-	}
-
-	EventReturn OnCheckDelete(Channel *c) anope_override
-	{
-		if (c->ci && persist.HasExt(c->ci))
-			return EVENT_STOP;
 		return EVENT_CONTINUE;
 	}
 
@@ -1318,7 +1314,8 @@ class CSSet : public Module
 		{
 			if (noautoop.HasExt(chan->ci))	
 				give_modes = false;
-			if (secureops.HasExt(chan->ci))
+			if (secureops.HasExt(chan->ci) && !user->HasPriv("chanserv/administration"))
+				// This overrides what chanserv does because it is loaded after chanserv
 				take_modes = true;
 		}
 	}

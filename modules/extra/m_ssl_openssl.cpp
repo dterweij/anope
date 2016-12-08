@@ -1,4 +1,13 @@
+/*
+ *
+ * (C) 2010-2016 Anope Team
+ * Contact us at team@anope.org
+ *
+ * Please read COPYING and README for further details.
+ */
+
 /* RequiredLibraries: ssl,crypto */
+/* RequiredWindowsLibraries: ssleay32,libeay32 */
 
 #include "module.h"
 #include "modules/ssl.h"
@@ -102,6 +111,10 @@ class SSLModule : public Module
 		if (!client_ctx || !server_ctx)
 			throw ModuleException("Error initializing SSL CTX");
 
+		long opts = SSL_OP_NO_SSLv2 | SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION | SSL_OP_CIPHER_SERVER_PREFERENCE;
+		SSL_CTX_set_options(client_ctx, opts);
+		SSL_CTX_set_options(server_ctx, opts);
+
 		SSL_CTX_set_mode(client_ctx, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 		SSL_CTX_set_mode(server_ctx, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
@@ -134,10 +147,10 @@ class SSLModule : public Module
 
 		if (Anope::IsFile(this->certfile.c_str()))
 		{
-			if (!SSL_CTX_use_certificate_file(client_ctx, this->certfile.c_str(), SSL_FILETYPE_PEM) || !SSL_CTX_use_certificate_file(server_ctx, this->certfile.c_str(), SSL_FILETYPE_PEM))
+			if (!SSL_CTX_use_certificate_chain_file(client_ctx, this->certfile.c_str()) || !SSL_CTX_use_certificate_chain_file(server_ctx, this->certfile.c_str()))
 				throw ConfigException("Error loading certificate");
 			else
-				Log(LOG_DEBUG) << "m_ssl: Successfully loaded certificate " << this->certfile;
+				Log(LOG_DEBUG) << "m_ssl_openssl: Successfully loaded certificate " << this->certfile;
 		}
 		else
 			Log() << "Unable to open certificate " << this->certfile;
@@ -147,7 +160,7 @@ class SSLModule : public Module
 			if (!SSL_CTX_use_PrivateKey_file(client_ctx, this->keyfile.c_str(), SSL_FILETYPE_PEM) || !SSL_CTX_use_PrivateKey_file(server_ctx, this->keyfile.c_str(), SSL_FILETYPE_PEM))
 				throw ConfigException("Error loading private key");
 			else
-				Log(LOG_DEBUG) << "m_ssl: Successfully loaded private key " << this->keyfile;
+				Log(LOG_DEBUG) << "m_ssl_openssl: Successfully loaded private key " << this->keyfile;
 		}
 		else
 		{
@@ -157,6 +170,20 @@ class SSLModule : public Module
 				Log() << "Unable to open private key " << this->keyfile;
 		}
 
+		// Allow disabling SSLv3
+		if (!config->Get<Anope::string>("sslv3").empty())
+		{
+			if (config->Get<bool>("sslv3"))
+			{
+				SSL_CTX_clear_options(client_ctx, SSL_OP_NO_SSLv3);
+				SSL_CTX_clear_options(server_ctx, SSL_OP_NO_SSLv3);
+			}
+			else
+			{
+				SSL_CTX_set_options(client_ctx, SSL_OP_NO_SSLv3);
+				SSL_CTX_set_options(server_ctx, SSL_OP_NO_SSLv3);
+			}
+		}
 	}
 
 	void OnPreServerConnect() anope_override
@@ -190,14 +217,37 @@ SSLSocketIO::SSLSocketIO()
 int SSLSocketIO::Recv(Socket *s, char *buf, size_t sz)
 {
 	int i = SSL_read(this->sslsock, buf, sz);
-	TotalRead += i;
+	if (i > 0)
+		TotalRead += i;
+	else if (i < 0)
+	{
+		int err = SSL_get_error(this->sslsock, i);
+		switch (err)
+		{
+			case SSL_ERROR_WANT_READ:
+			case SSL_ERROR_WANT_WRITE:
+				SocketEngine::SetLastError(EAGAIN);
+		}
+	}
+
 	return i;
 }
 
 int SSLSocketIO::Send(Socket *s, const char *buf, size_t sz)
 {
 	int i = SSL_write(this->sslsock, buf, sz);
-	TotalWritten += i;
+	if (i > 0)
+		TotalWritten += i;
+	else if (i < 0)
+	{
+		int err = SSL_get_error(this->sslsock, i);
+		switch (err)
+		{
+			case SSL_ERROR_WANT_READ:
+			case SSL_ERROR_WANT_WRITE:
+				SocketEngine::SetLastError(EAGAIN);
+		}
+	}
 	return i;
 }
 
